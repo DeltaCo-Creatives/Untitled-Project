@@ -37,18 +37,18 @@ Depends on Phase 2 OAuth for real user credentials; build the plumbing first aga
 - [ ] `DELETE /api/drive/watch` — stop watching (disconnect flow)
 
 **Frontend**
-- [ ] Scaffold React + Vite app in `frontend/` (Vercel-ready, Root Directory `frontend`)
-- [ ] Supabase client + "Login with Google" flow
-- [ ] Auth session handling, protected routes/layout
+- [x] Scaffold React + Vite app in `frontend/` (Vercel-ready, Root Directory `frontend`)
+- [x] Supabase client + "Login with Google" flow
+- [x] Auth session handling, protected routes/layout
 - [ ] Google Picker API integration: pick Raw Assets folder, pick Destination folder
-- [ ] Onboarding flow: login → pick folders → confirm → trigger watch registration → success state
+- [x] Onboarding flow: login → pick folders → confirm → trigger watch registration → success state
 
 ## Phase 3 — Dashboard & Account Management (frontend)
 
-- [ ] Dashboard: show currently watched Raw folder + Destination folder
-- [ ] Settings: change folders, disconnect Drive, delete account
-- [ ] Activity view (optional): log of renamed/moved files — store only filenames/tags/timestamps in Supabase, never image bytes (Zero-Retention still applies to logs)
-- [ ] Error/empty states (no folders configured yet, Drive disconnected, subscription inactive)
+- [x] Dashboard: show currently watched Raw folder + Destination folder
+- [x] Settings: change folders, disconnect Drive, delete account
+- [x] Activity view (optional): log of renamed/moved files — store only filenames/tags/timestamps in Supabase, never image bytes (Zero-Retention still applies to logs)
+- [x] Error/empty states (no folders configured yet, Drive disconnected, subscription inactive)
 
 ## Phase 4 — Payments (Lemon Squeezy or Paddle)
 
