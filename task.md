@@ -48,18 +48,23 @@ Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md
 - [ ] Begin Google restricted-scope verification if launching publicly — long lead time
 
 **Frontend**
-- [ ] Scaffold React + Vite in `frontend/`
-- [ ] Supabase client + "Login with Google"
-- [ ] Auth session handling and protected routes
+- [x] Scaffold React + Vite app in `frontend/` (Vercel-ready, Root Directory `frontend`)
+- [x] Supabase client + "Login with Google" flow
+- [x] Auth session handling, protected routes/layout
 - [ ] Connect-Drive step: call `/api/auth/google/start`, redirect to consent, handle the `?connected=1` / `?error=` return
+- [ ] Google Picker API integration: pick Raw Assets folder, pick Destination folder
+- [x] Onboarding flow: login → pick folders → confirm → trigger watch registration → success state
 - [ ] Folder pickers backed by `GET /api/drive/folders`, saving via `POST /api/drive/config`
 - [ ] Kick off `POST /api/drive/watch` to finish onboarding
 
 ## Phase 3 — Dashboard & Account Management (frontend)
 
+- [x] Dashboard: show currently watched Raw folder + Destination folder
 - [ ] Dashboard reading `GET /api/me` (connection, folders, watch status, subscription)
+- [x] Settings: change folders, disconnect Drive, delete account
+- [x] Activity view (optional): log of renamed/moved files — store only filenames/tags/timestamps in Supabase, never image bytes (Zero-Retention still applies to logs)
 - [ ] Activity list from `GET /api/activity` (filenames + tags only)
-- [ ] Settings: change folders, disconnect Drive, delete account
+- [x] Error/empty states (no folders configured yet, Drive disconnected, subscription inactive)
 - [ ] Error/empty states: no folders yet, Drive disconnected, watch expired, trial ended
 
 ## Phase 4 — Payments (Lemon Squeezy or Paddle)
