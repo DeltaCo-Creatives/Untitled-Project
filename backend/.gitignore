@@ -1,6 +1,13 @@
 node_modules/
+
 .env
+.env.*
+!.env.example
+client_secret*.json
+*-service-account*.json
+
 *.log
 
+# Local test images — never commit client assets
 test-assets/*
 !test-assets/.gitkeep

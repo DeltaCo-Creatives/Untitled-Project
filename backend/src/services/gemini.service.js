@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { env } from "../config/env.js";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const ai = new GoogleGenAI({ apiKey: env.gemini.apiKey });
 
 const SYSTEM_PROMPT = `You are an image-tagging engine for a digital asset management tool.
 Classify the given image and respond with STRICT JSON only, matching this shape:
@@ -26,10 +26,19 @@ const RESPONSE_SCHEMA = {
 /**
  * Sends an image buffer to Gemini Flash and returns the parsed
  * {genre, subject, style} classification used to rename/move the file.
+ *
+ * Uses inline image data rather than the Files API so the bytes exist only
+ * for the duration of the request (Zero-Retention).
  */
 export async function classifyImage(buffer, mimeType = "image/jpeg") {
+  if (buffer.length > env.gemini.maxImageBytes) {
+    throw new Error(
+      `Image is ${buffer.length} bytes, over the ${env.gemini.maxImageBytes} byte inline limit`,
+    );
+  }
+
   const response = await ai.models.generateContent({
-    model: MODEL,
+    model: env.gemini.model,
     contents: [
       {
         role: "user",

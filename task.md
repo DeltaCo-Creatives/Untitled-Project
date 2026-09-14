@@ -1,84 +1,106 @@
 # DriveTag AI — Task List
 
-Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md](CLAUDE.md). Check items off as they land; keep this file in sync with `CLAUDE.md`'s "Current State" section when a phase completes.
+Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md](CLAUDE.md). Manual setup steps (Supabase, Google Cloud, secrets) live in [ForDev.md](ForDev.md).
 
-## Phase 0 — Core Webhook + AI Loop (backend proof of concept)
+**Where things stand:** the backend is built for Loops A and B. Remaining work is the frontend, payments, and running the whole thing against real credentials for the first time.
 
-- [x] Express server scaffold (`backend/server.js`)
-- [x] `POST /webhook/drive` receiver with shared-secret validation (`backend/src/routes/driveWebhook.routes.js`)
-- [x] Gemini classification service — `classifyImage()` returning strict `{genre, subject, style}` JSON (`backend/src/services/gemini.service.js`)
+## Phase 0 — Core Webhook + AI Loop (backend)
+
+- [x] Express server scaffold, split into `server.js` + `src/app.js`
+- [x] `POST /webhook/drive` with timing-safe shared-secret validation, fast ack, async sweep
+- [x] Gemini classification service with strict `responseSchema` → `{genre, subject, style}`
 - [x] Manual test script (`npm run test:gemini`)
-- [x] ngrok walkthrough for exercising the webhook locally
-- [ ] Idempotency guard on the webhook (Drive can redeliver the same notification — dedupe by `resourceId` + `X-Goog-Message-Number` before processing)
-- [ ] Structured error handling for Gemini failures (bad JSON, rate limit, timeout) — log and skip rather than crash the process
+- [x] Centralized env config with fail-fast validation
+- [x] Structured redacting logger + central error handler
+- [x] Idempotency guard — `processed_files` unique `(user_id, file_id)` claim before processing
+- [x] Per-file error isolation so one bad image doesn't abort a sweep
+- [x] Image size ceiling (skips files too large for an inline Gemini request)
+- [ ] First real end-to-end run against live Google + Supabase credentials (follow ForDev.md)
 
 ## Phase 1 — Google Drive integration (backend)
 
-Depends on Phase 2 OAuth for real user credentials; build the plumbing first against a personal/service Drive account if needed to unblock.
-
-- [ ] `drive.service.js`: fetch a file's bytes into memory by file ID (Drive API `files.get` with `alt=media`)
-- [ ] `drive.service.js`: rename + move a file (`files.update` with `name` and `addParents`/`removeParents`)
-- [ ] Wire the webhook handler: notification → look up owning user/folder config → fetch file → `classifyImage()` → rename/move → discard buffer (never touches disk, per Zero-Retention)
-- [ ] Register a Drive `watch()` channel for a user's Raw Assets folder, store `channelId`/`resourceId`/`expiration` in Supabase
-- [ ] Channel renewal job (Drive watch channels expire after ~7 days — needs a scheduled renewal before expiry)
-- [ ] Handle `resourceState: sync` (initial channel-creation ping) as a no-op, only act on `update`/`add`
-- [ ] Map an incoming webhook to the correct user by `channelId`/`resourceId` lookup in Supabase
+- [x] `drive.service.js` — fetch file bytes into memory (`alt=media`, never touches disk)
+- [x] `drive.service.js` — rename + move (`files.update` with `addParents`/`removeParents`)
+- [x] `drive.service.js` — changes feed (`getStartPageToken`, `changes.list`)
+- [x] `pipeline.service.js` — notification → changes sweep → filter to Raw folder → classify → rename/move → record
+- [x] Watch channel registration storing `channelId`/`resourceId`/`pageToken`/`expiresAt`
+- [x] Channel renewal driven by the Drive-issued expiration (`npm run renew:channels`)
+- [x] `resourceState: sync` treated as a no-op
+- [x] Map incoming webhook → user via `channel_id` lookup
+- [ ] Schedule the renewal job in production (GitHub Actions cron or a worker component — see ForDev.md §9). Channels lapse silently, so this is required before real users.
+- [ ] Shared Drive support (currently `restrictToMyDrive`, My Drive only)
 
 ## Phase 2 — Auth & Onboarding (Loop A)
 
 **Backend**
-- [ ] Create Supabase project (Postgres + Auth)
-- [ ] Enable Google OAuth provider in Supabase, request Drive scopes (`drive.file` or narrower, scoped to user-selected folders — avoid full `drive` scope if possible)
-- [ ] Schema: `users` (from Supabase auth), `folder_configs` (user_id, raw_folder_id, destination_folder_id), `drive_channels` (user_id, channel_id, resource_id, expires_at), `subscriptions` (user_id, status, plan, provider_customer_id)
-- [ ] Express middleware to verify Supabase JWT on protected API routes
-- [ ] Secure storage/refresh of Google OAuth refresh tokens (Supabase Vault or equivalent — never log or expose them)
-- [ ] `POST /api/folders` — save the user's chosen Raw/Destination folder IDs
-- [ ] `POST /api/drive/watch` — register the watch channel for the saved Raw folder (calls Phase 1 logic)
-- [ ] `DELETE /api/drive/watch` — stop watching (disconnect flow)
+- [x] Supabase service-role client + repository layer per table
+- [x] Schema with RLS: `google_credentials`, `folder_configs`, `drive_channels`, `processed_files`, `subscriptions` (`supabase/migrations/0001_init.sql`)
+- [x] `requireAuth` middleware validating Supabase access tokens
+- [x] Dedicated Drive OAuth flow (offline refresh token) with signed, expiring `state`
+- [x] Refresh tokens encrypted at rest (AES-256-GCM) in a table with no client-readable policy
+- [x] `GET /api/drive/folders` — folder listing for the onboarding picker
+- [x] `GET/POST /api/drive/config` — save Raw/Destination folders, validated against Drive
+- [x] `POST/DELETE /api/drive/watch` — start/stop watching
+- [x] `DELETE /api/auth/google` — disconnect: stop watch, revoke at Google, delete credentials
+- [x] `GET /api/me` and `GET /api/activity` for the dashboard
+- [ ] Create the Supabase project and run the migration (ForDev.md §1–2)
+- [ ] Configure Google OAuth consent screen + client (ForDev.md §3)
+- [ ] Begin Google restricted-scope verification if launching publicly — long lead time
 
 **Frontend**
-- [ ] Scaffold React + Vite app in `frontend/` (Vercel-ready, Root Directory `frontend`)
-- [ ] Supabase client + "Login with Google" flow
-- [ ] Auth session handling, protected routes/layout
-- [ ] Google Picker API integration: pick Raw Assets folder, pick Destination folder
-- [ ] Onboarding flow: login → pick folders → confirm → trigger watch registration → success state
+- [ ] Scaffold React + Vite in `frontend/`
+- [ ] Supabase client + "Login with Google"
+- [ ] Auth session handling and protected routes
+- [ ] Connect-Drive step: call `/api/auth/google/start`, redirect to consent, handle the `?connected=1` / `?error=` return
+- [ ] Folder pickers backed by `GET /api/drive/folders`, saving via `POST /api/drive/config`
+- [ ] Kick off `POST /api/drive/watch` to finish onboarding
 
 ## Phase 3 — Dashboard & Account Management (frontend)
 
-- [ ] Dashboard: show currently watched Raw folder + Destination folder
+- [ ] Dashboard reading `GET /api/me` (connection, folders, watch status, subscription)
+- [ ] Activity list from `GET /api/activity` (filenames + tags only)
 - [ ] Settings: change folders, disconnect Drive, delete account
-- [ ] Activity view (optional): log of renamed/moved files — store only filenames/tags/timestamps in Supabase, never image bytes (Zero-Retention still applies to logs)
-- [ ] Error/empty states (no folders configured yet, Drive disconnected, subscription inactive)
+- [ ] Error/empty states: no folders yet, Drive disconnected, watch expired, trial ended
 
 ## Phase 4 — Payments (Lemon Squeezy or Paddle)
 
-**Decision needed:** pick Lemon Squeezy vs Paddle before starting this phase.
+**Decision needed before starting:** Lemon Squeezy vs Paddle.
 
 **Backend**
-- [ ] Integrate chosen provider's checkout/customer API
-- [ ] Webhook handler for subscription lifecycle events (created, renewed, cancelled, payment failed)
-- [ ] Update `subscriptions` table on each event
-- [ ] Gate the webhook/AI pipeline on active subscription status (stop processing for lapsed accounts)
+- [x] Provider-agnostic subscription gate (`isEntitled`) checked before any Gemini spend, failing closed
+- [x] Trial row created on first Drive connect (`TRIAL_DAYS`) so onboarding works pre-billing
+- [ ] Checkout/customer API integration for the chosen provider
+- [ ] Webhook handler for subscription lifecycle events → update `subscriptions`
+- [ ] Handle trial expiry → `expired`, and dunning/`past_due`
 
 **Frontend**
 - [ ] Pricing page
-- [ ] Checkout flow (redirect to hosted checkout)
-- [ ] Billing management link (customer portal)
-- [ ] Subscription status shown in dashboard
+- [ ] Checkout redirect
+- [ ] Billing portal link + subscription status in dashboard
 
 ## Phase 5 — Deployment & Launch
 
-- [ ] Backend: deploy to DigitalOcean App Platform (Source Directory `/backend`), set production env vars (`GEMINI_API_KEY`, `GOOGLE_DRIVE_WEBHOOK_TOKEN`, Supabase keys, payment provider keys)
-- [ ] Frontend: deploy to Vercel (Root Directory `frontend`), set production env vars
-- [ ] Register the production webhook URL with Google Drive `watch()` calls (replace ngrok)
-- [ ] Custom domain + HTTPS on both frontend and backend
-- [ ] Basic logging/monitoring on the backend (at minimum: structured logs for webhook receipts, Gemini calls, Drive API errors)
-- [ ] Landing/marketing page copy — lead with the Zero-Retention security posture, it's the main trust pitch for a B2B tool touching client assets
-- [ ] Terms of Service + Privacy Policy reflecting the Zero-Retention data handling
-- [ ] Rate limiting / abuse protection on public-facing endpoints (`/webhook/drive`, auth endpoints)
+- [ ] Backend on DigitalOcean App Platform (Source Directory `/backend`, encrypted env vars)
+- [ ] Frontend on Vercel (Root Directory `frontend`)
+- [ ] Production `GOOGLE_OAUTH_REDIRECT_URI` + `DRIVE_WEBHOOK_URL`; re-register watch channels after cutover
+- [ ] Custom domain + HTTPS on both
+- [ ] `helmet` + rate limiting on public endpoints (exclude `/webhook/drive` — Google bursts)
+- [ ] Error monitoring beyond stdout logs (e.g. Sentry)
+- [ ] Landing page copy — lead with Zero-Retention, it's the trust pitch for a tool touching client assets
+- [ ] Terms of Service + Privacy Policy reflecting Zero-Retention, required for Google verification anyway
+
+## Decisions resolved in code
+
+Recorded so they aren't relitigated by accident — details in ForDev.md §12.
+
+- Watch the **changes feed**, not the folder (Drive folder watches don't reliably fire for added children).
+- Drive authorization is a **separate OAuth grant** from Supabase login, to get an offline refresh token.
+- Activity history is kept, **metadata only** — needed for idempotency, stores no pixels.
+- **Full `drive` scope** is required; `drive.file` cannot see files other people add.
+- Duplicate output filenames are allowed; Drive keeps files distinct by ID.
 
 ## Open decisions
 
 - [ ] Lemon Squeezy vs Paddle
-- [ ] Exact Drive OAuth scope (narrow `drive.file` vs broader `drive`) — affects Google's app verification requirements
-- [ ] Whether to keep any processing history/log at all, or truly log nothing beyond ephemeral console output
+- [ ] Whether to pursue Google restricted-scope verification (public launch) or stay on a test-user allowlist (design partners only)
+- [ ] Pricing model — per seat, per folder, or per image processed

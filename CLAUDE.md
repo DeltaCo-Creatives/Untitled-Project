@@ -8,72 +8,100 @@ DriveTag AI is a B2B micro-SaaS that automatically organizes visual assets for c
 
 **Core mechanism:** the app listens for Google Drive webhooks fired when an image is dropped into a specific "Raw" folder, temporarily ingests the image into memory, sends it to the Gemini Flash API for visual classification, then renames and moves the file in Google Drive based on the AI's returned tags.
 
-**Security posture — "Zero-Retention":** user images must never be persisted to the database or any third-party storage bucket. Images are processed in memory only and discarded immediately after the Drive rename/move completes. Any code path that writes an incoming image to disk, a database, or a storage bucket violates this design and should be flagged.
+**Security posture — "Zero-Retention":** user images must never be persisted to the database or any third-party storage bucket. Images are processed in memory only and discarded immediately after the Drive rename/move completes. Any code path that writes an incoming image to disk, a database, or a storage bucket violates this design and should be flagged. Note this is also why Gemini is called with inline image data rather than the Files API, which would retain the upload.
 
 ## Current State
 
-Only the backend's Drive-webhook receiver and Gemini classification call are built and proven. **No auth, no Supabase, no frontend UI, and no live Drive `watch()` channel registration exist yet** — those come after this core loop is validated. `frontend/` is an empty placeholder (see [frontend/README.md](frontend/README.md)).
+The backend is complete for Loops A and B: Drive OAuth, folder config, watch-channel lifecycle, the change-feed sweep, Gemini classification, and rename/move all exist and are wired together. **Not built: the frontend (`frontend/` is a placeholder) and the payment-provider webhook** (pending the Lemon Squeezy vs Paddle decision — the subscription gate it feeds is already in place).
+
+Nothing has been run against real Google/Supabase credentials yet — [ForDev.md](ForDev.md) is the runbook for that, and it is the doc to update when setup steps change. See [task.md](task.md) for remaining scope.
 
 ## Tech Stack & Hosting
 
 - **Frontend:** React + Vite. Hosted on Vercel (Root Directory: `frontend`). *Not built yet.*
-- **Backend:** Node.js + Express (ESM). Hosted on DigitalOcean App Platform (Source Directory: `/backend`).
-- **Database & Auth:** Supabase (PostgreSQL) — will handle Google OAuth login and store subscription state/folder IDs. *Not integrated yet.*
-- **AI Engine:** Gemini Flash API via the `@google/genai` SDK (Google AI Studio key).
+- **Backend:** Node.js + Express 5 (ESM). Hosted on DigitalOcean App Platform (Source Directory: `/backend`).
+- **Database & Auth:** Supabase (PostgreSQL) — Google login for identity, plus all app tables.
+- **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON.
+- **Google Drive:** `googleapis` SDK.
 - **Payments:** Lemon Squeezy or Paddle (Merchant of Record). *Not integrated yet.*
 
 Both `frontend/` and `backend/` deploy from the same GitHub repo/branch (`main`) — do not split them into separate repos or branches.
 
-## Core SaaS Loops
-
-**Loop A — Onboarding & Auth** *(not implemented yet)*: Google login via Supabase → request Drive OAuth scopes → user picks a "Raw Assets" folder and a "Destination" folder.
-
-**Loop B — Webhook & AI pipeline** *(the part currently being built)*:
-1. Drive sends a push notification (POST, empty body, `X-Goog-*` headers) to the backend when a file lands in "Raw Assets".
-2. Backend validates the notification and fetches the file buffer via the Drive API, in memory.
-3. Backend sends the image buffer + system prompt to Gemini.
-4. Gemini returns strict JSON: `{"genre": "...", "subject": "...", "style": "..."}`.
-5. Backend renames the file (e.g. `genre_subject.jpg`) and moves it to the Destination folder via the Drive API.
-
-Steps 1 and 3–4 are implemented; step 2 (real Drive file fetch) and step 5 (rename/move) are not — they depend on Loop A's OAuth credentials.
-
 ## Architecture
 
 ```
-DriveTagAI/
-├── frontend/                        placeholder only — React/Vite not scaffolded
-├── backend/
-│   ├── server.js                    Express entrypoint; mounts routes, /health check
-│   ├── src/
-│   │   ├── routes/
-│   │   │   └── driveWebhook.routes.js   POST /webhook/drive — validates X-Goog-Channel-Token, logs the notification, acks 200
-│   │   └── services/
-│   │       └── gemini.service.js        classifyImage(buffer, mimeType) → {genre, subject, style} via Gemini
-│   ├── scripts/
-│   │   └── test-gemini.js           standalone Gemini pipeline test (npm run test:gemini)
-│   ├── test-assets/                 drop a sample.jpg here for realistic test-gemini runs (gitignored)
-│   └── .env.example
-├── .gitignore
-└── README.md                        quickstart + ngrok webhook testing walkthrough
+backend/
+├── server.js                  validates env, then dynamically imports the app
+├── src/
+│   ├── app.js                 express assembly (separate from listen)
+│   ├── config/env.js          dotenv + typed config + assertRequiredEnv()
+│   ├── lib/supabase.js        service-role client (bypasses RLS — server only)
+│   ├── middleware/            requireAuth (Supabase token), errorHandler
+│   ├── routes/
+│   │   ├── driveWebhook.routes.js  POST /webhook/drive
+│   │   ├── auth.routes.js          Drive OAuth start/callback/disconnect
+│   │   ├── drive.routes.js         folder listing, config, watch lifecycle
+│   │   └── account.routes.js       /api/me, /api/activity
+│   ├── services/
+│   │   ├── googleAuth.service.js   OAuth client, consent URL, token exchange
+│   │   ├── drive.service.js        file bytes, rename/move, changes feed
+│   │   ├── driveWatch.service.js   channel start/stop/renew
+│   │   ├── gemini.service.js       classifyImage() → {genre, subject, style}
+│   │   └── pipeline.service.js     Loop B orchestration
+│   ├── repositories/          one module per table, all Supabase access
+│   └── utils/                 logger (redacting), crypto (AES-GCM + HMAC state), filename
+├── scripts/
+│   ├── test-gemini.js         standalone Gemini probe
+│   └── renew-channels.js      cron entrypoint for channel renewal
+└── supabase/migrations/0001_init.sql   schema + RLS (source of truth)
 ```
 
-- `backend/api` from the original blueprint is realized as `backend/src/routes` + `backend/src/services` — routes handle HTTP concerns, services own the external API integrations (Gemini today; Drive file-fetch/rename-move will follow the same pattern).
-- The backend is the only component that should ever touch raw image bytes or Google Drive credentials; the frontend (once built) is a management/config UI and should not handle image data directly.
-- Drive webhook auth is a shared-secret check today (`GOOGLE_DRIVE_WEBHOOK_TOKEN` compared against the `X-Goog-Channel-Token` header) — this is separate from and simpler than the Loop A user-facing OAuth that will come later.
+Layering is strict: routes handle HTTP, services own external APIs and orchestration, repositories own all Supabase queries. Routes should not query Supabase directly.
+
+### Non-obvious design decisions
+
+These were deliberate and are easy to "fix" wrongly:
+
+- **We watch the user's changes feed, not the Raw folder.** Drive's per-file watch on a folder does not reliably fire for files added inside it. So `changes.watch` + `changes.list(pageToken)` is used, filtered to the Raw folder. This is why `drive_channels.page_token` exists and must be advanced after every sweep.
+- **Drive authorization is a separate OAuth grant from Supabase login.** The pipeline runs while the user is absent, so it needs its own offline refresh token; Supabase does not durably hand one over. `/api/auth/google/*` implements that flow, with a signed+expiring `state` param instead of a session cookie.
+- **Env loading is centralized in `config/env.js`, which calls `dotenv.config()` in its own module body.** ESM hoists imports, so calling `dotenv.config()` in an entrypoint body runs *after* imported modules have already read `process.env`. For the same reason `server.js` validates env and then `await import()`s the app — otherwise Supabase's constructor throws before the readable "you forgot these vars" error.
+- **Idempotency lives in the database.** `processed_files` has `unique (user_id, file_id)`; claiming a file before processing is what makes Drive's duplicate/retried notifications safe. The in-memory `inFlight` set in the pipeline is only a cost optimization, not the correctness guarantee.
+- **The webhook acks before processing.** Google retries on non-2xx and expects a fast response, so the sweep runs in `setImmediate` after `res.sendStatus(200)`.
+- **The subscription gate fails closed** and is checked before any Gemini spend. A trial row is created on first Drive connect so onboarding works pre-billing.
+- **Full `drive` scope is required**, not `drive.file` — the app must read files other people drop in the folder. This makes the app subject to Google restricted-scope verification; see the warning in ForDev.md.
 
 ## Commands
 
 All commands run from `backend/`:
 
 ```bash
-npm install              # install dependencies
-npm run dev               # start Express with nodemon (auto-reload), reads .env (PORT defaults to 3001)
-npm start                 # start Express without auto-reload
-npm run test:gemini [path]  # send a local image (default: test-assets/sample.jpg, falls back to a placeholder pixel) to Gemini and print the {genre, subject, style} result
+npm install                    # install dependencies
+npm run dev                    # start with nodemon (auto-reload)
+npm start                      # start without auto-reload
+npm run test:gemini [path]     # classify a local image, print tags + target filename
+npm run renew:channels         # renew expiring Drive watch channels (run hourly in prod)
 ```
 
-Requires `backend/.env` (copy from `.env.example`): `GEMINI_API_KEY` (from Google AI Studio), `GOOGLE_DRIVE_WEBHOOK_TOKEN` (self-chosen shared secret), optional `GEMINI_MODEL` override (defaults to `gemini-2.5-flash`) and `PORT`.
+`npm run test:gemini` only needs `GEMINI_API_KEY`; the server needs the full `.env`. Requirements are listed in `backend/.env.example` and explained in ForDev.md. There is no frontend tooling and no automated test suite yet — verification so far is the manual probes above plus curl against a running server.
 
-See [README.md](README.md) for the full ngrok-based walkthrough for exercising `POST /webhook/drive` locally.
+## API surface
 
-There is no frontend build/lint/test yet, and no automated test suite for the backend beyond the manual Gemini script above — add real tests as the backend grows past this initial proof-of-concept stage.
+| Method | Path | Auth |
+|---|---|---|
+| GET | `/health` | none |
+| POST | `/webhook/drive` | `X-Goog-Channel-Token` shared secret |
+| POST | `/api/auth/google/start` | Bearer (Supabase) |
+| GET | `/api/auth/google/callback` | signed `state` param |
+| DELETE | `/api/auth/google` | Bearer |
+| GET | `/api/drive/folders` | Bearer |
+| GET/POST | `/api/drive/config` | Bearer |
+| GET/POST/DELETE | `/api/drive/watch` | Bearer |
+| GET | `/api/me` | Bearer |
+| GET | `/api/activity` | Bearer |
+
+## Conventions
+
+- ESM throughout (`"type": "module"`); use `node:` prefixes for builtins.
+- Secrets come from `config/env.js`, never `process.env` at a call site.
+- Log with `utils/logger.js` (structured JSON, auto-redacts token/secret/key fields) rather than `console.log`. Never log image bytes.
+- Repositories throw on Supabase errors with a contextual message; routes let Express 5 forward rejections to `errorHandler`.

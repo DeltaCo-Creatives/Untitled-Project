@@ -1,10 +1,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import dotenv from "dotenv";
+import { env } from "../src/config/env.js";
 import { classifyImage } from "../src/services/gemini.service.js";
-
-dotenv.config();
+import { buildFileName } from "../src/utils/filename.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_IMAGE = path.join(__dirname, "..", "test-assets", "sample.jpg");
@@ -19,26 +18,34 @@ async function loadImage(imagePath) {
   try {
     const buffer = await readFile(imagePath);
     const mimeType = imagePath.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
-    return { buffer, mimeType };
+    return { buffer, mimeType, name: path.basename(imagePath) };
   } catch (err) {
     if (err.code !== "ENOENT") throw err;
     console.warn(`No image found at ${imagePath}.`);
-    console.warn("Using a 1x1 placeholder pixel instead — drop a real photo at backend/test-assets/sample.jpg for a meaningful result.");
-    return { buffer: Buffer.from(PLACEHOLDER_PNG_BASE64, "base64"), mimeType: "image/png" };
+    console.warn(
+      "Using a 1x1 placeholder pixel instead — drop a real photo at backend/test-assets/sample.jpg for a meaningful result.",
+    );
+    return {
+      buffer: Buffer.from(PLACEHOLDER_PNG_BASE64, "base64"),
+      mimeType: "image/png",
+      name: "placeholder.png",
+    };
   }
 }
 
 async function main() {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not set. Copy backend/.env.example to backend/.env and fill it in.");
+  if (!env.gemini.apiKey) {
+    throw new Error("GEMINI_API_KEY is not set. Copy backend/.env.example to backend/.env.");
   }
 
   const imagePath = process.argv[2] || DEFAULT_IMAGE;
-  const { buffer, mimeType } = await loadImage(imagePath);
+  const { buffer, mimeType, name } = await loadImage(imagePath);
 
-  console.log(`Sending ${buffer.length} bytes to Gemini (${mimeType})...`);
-  const result = await classifyImage(buffer, mimeType);
-  console.log("Gemini response:", result);
+  console.log(`Sending ${buffer.length} bytes to ${env.gemini.model} (${mimeType})...`);
+  const tags = await classifyImage(buffer, mimeType);
+
+  console.log("Gemini tags:", tags);
+  console.log("Would rename to:", buildFileName(tags, name, mimeType));
 }
 
 main().catch((err) => {

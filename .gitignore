@@ -1,5 +1,31 @@
+# Dependencies
 node_modules/
+
+# Secrets — every env file except the committed templates
 .env
-.env.local
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+# Google service-account / OAuth client downloads
+client_secret*.json
+*-service-account*.json
+credentials.json
+
+# Build output
+dist/
+build/
+.vercel/
+.next/
+
+# Logs
 *.log
+npm-debug.log*
+
+# Editor / OS
 .DS_Store
+Thumbs.db
+.idea/
+*.swp

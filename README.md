@@ -2,7 +2,7 @@
 
 Automated visual-asset tagging for creative agencies and freelancers. Watches a Google Drive "Raw" folder, classifies new images with Gemini Flash, then renames and moves them into a destination folder. See [ProjectStructure.md](ProjectStructure.md) for the full product blueprint and [CLAUDE.md](CLAUDE.md) for architecture notes.
 
-Currently in progress: proving out the backend's Drive webhook + Gemini classification loop before building auth or the frontend.
+The backend is built (Drive OAuth, folder config, watch channels, the Gemini pipeline, rename/move). The frontend is not started. **Start with [ForDev.md](ForDev.md)** — it walks through Supabase, Google Cloud, and secrets setup step by step.
 
 ## Backend quickstart
 
