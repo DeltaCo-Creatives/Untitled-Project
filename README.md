@@ -1,32 +1,57 @@
-# React + TypeScript + Vite
+# DriveTag AI
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Automated visual-asset tagging for creative agencies and freelancers. Watches a Google Drive "Raw" folder, classifies new images with Gemini Flash, then renames and moves them into a destination folder. See [ProjectStructure.md](ProjectStructure.md) for the full product blueprint and [CLAUDE.md](CLAUDE.md) for architecture notes.
 
-Currently, two official plugins are available:
+Currently in progress: proving out the backend's Drive webhook + Gemini classification loop before building auth or the frontend.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Backend quickstart
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+cd backend
+npm install
+cp .env.example .env   # fill in GEMINI_API_KEY and GOOGLE_DRIVE_WEBHOOK_TOKEN
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+This starts the Express server on `http://localhost:3001` with:
+- `GET /health` — liveness check
+- `POST /webhook/drive` — Google Drive push-notification receiver
+
+### Testing the Gemini pipeline
+
+```bash
+cd backend
+npm run test:gemini                       # uses test-assets/sample.jpg, or a placeholder pixel if absent
+npm run test:gemini path/to/your/photo.jpg # classify a specific image
+```
+
+Prints the `{genre, subject, style}` JSON Gemini returns for the image.
+
+### Testing the webhook locally with ngrok
+
+Google Drive push notifications require a public HTTPS URL, so local testing goes through ngrok.
+
+1. Install ngrok and authenticate once:
+   ```bash
+   npm install -g ngrok
+   ngrok config add-authtoken <your-authtoken-from-ngrok.com>
+   ```
+2. Start the backend in one terminal:
+   ```bash
+   cd backend && npm run dev
+   ```
+3. In a second terminal, expose it:
+   ```bash
+   ngrok http 3001
+   ```
+   ngrok prints a public URL like `https://abcd1234.ngrok-free.app` — this forwards to your local server.
+4. Simulate a Drive push notification against either the local server or the ngrok URL:
+   ```bash
+   curl -X POST http://localhost:3001/webhook/drive \
+     -H "X-Goog-Channel-ID: test-channel" \
+     -H "X-Goog-Resource-ID: test-resource" \
+     -H "X-Goog-Resource-State: update" \
+     -H "X-Goog-Channel-Token: $GOOGLE_DRIVE_WEBHOOK_TOKEN"
+   ```
+   A `200 OK` with no body means the endpoint accepted it; check the backend's console log for the parsed notification. Omitting/mismatching the token header should get a `403`.
+5. Registering a real Drive `watch()` channel against the ngrok URL requires OAuth credentials, which is out of scope until Loop A (auth) is built — this step only proves the receiver shape.
