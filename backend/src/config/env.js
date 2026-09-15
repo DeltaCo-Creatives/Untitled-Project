@@ -26,7 +26,7 @@ export const env = {
 
   gemini: {
     apiKey: required("GEMINI_API_KEY"),
-    model: optional("GEMINI_MODEL", "gemini-2.5-flash"),
+    model: optional("GEMINI_MODEL", "gemini-3.6-flash"),
     // Images are sent inline to Gemini (never uploaded to the Files API, which
     // would retain them). Inline requests are capped well under 20MB.
     maxImageBytes: Number(optional("MAX_IMAGE_BYTES", String(18 * 1024 * 1024))),
