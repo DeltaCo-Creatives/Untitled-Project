@@ -341,6 +341,8 @@ Expect `200`. Send a wrong token and expect `403`.
 
 ## 7b. Webhook domain verification — expect this blocker
 
+**Domain purchased:** `drivetag-ai.com` (Namecheap). See [domainguide.md](domainguide.md) for the full DNS/verification/env-var walkthrough for this specific domain — the steps below are the general version.
+
 Google requires the domain receiving Drive push notifications to be **verified and registered in your Cloud project**. When it isn't, `changes.watch` is rejected with something like `Unauthorized WebHook callback channel` — that failure is Google refusing the address, not a bug in the backend.
 
 The catch: you can only verify a domain you control, which rules out `*.ngrok-free.app` and DigitalOcean's default `*.ondigitalocean.app`.
