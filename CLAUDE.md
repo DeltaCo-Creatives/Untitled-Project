@@ -12,13 +12,17 @@ DriveTag AI is a B2B micro-SaaS that automatically organizes visual assets for c
 
 ## Current State
 
-The backend is complete for Loops A and B: Drive OAuth, folder config, watch-channel lifecycle, the change-feed sweep, Gemini classification, and rename/move all exist and are wired together. **Not built: the frontend (`frontend/` is a placeholder) and the payment-provider webhook** (pending the Lemon Squeezy vs Paddle decision — the subscription gate it feeds is already in place).
+The backend is complete for Loops A and B: Drive OAuth, folder config, watch-channel lifecycle, the change-feed sweep, Gemini classification, and rename/move all exist and are wired together.
 
-Nothing has been run against real Google/Supabase credentials yet — [ForDev.md](ForDev.md) is the runbook for that, and it is the doc to update when setup steps change. See [task.md](task.md) for remaining scope.
+The frontend exists as a React 19 + Vite + Tailwind shell (`Login`, `Onboarding`, `Dashboard` pages, `AuthContext`, `ProtectedRoute`, Supabase client) but **makes no calls to the backend** — there is no `VITE_API_URL` and no `fetch` against `/api/*`. Wiring those two halves together is the largest open task; don't assume a screen works just because it renders.
+
+Also not built: the payment-provider webhook, pending the Lemon Squeezy vs Paddle decision (the subscription gate it feeds is already in place).
+
+Nothing has been run against real Google/Supabase credentials yet — [ForDev.md](ForDev.md) is the ordered setup runbook and [tutorial.md](tutorial.md) covers how to obtain each individual credential — keep both current when setup changes. See [task.md](task.md) for remaining scope.
 
 ## Tech Stack & Hosting
 
-- **Frontend:** React + Vite. Hosted on Vercel (Root Directory: `frontend`). *Not built yet.*
+- **Frontend:** React 19 + Vite + Tailwind 4 + react-router, TypeScript. Hosted on Vercel (Root Directory: `frontend`). UI shell only — not yet calling the API. Lint via `oxlint`.
 - **Backend:** Node.js + Express 5 (ESM). Hosted on DigitalOcean App Platform (Source Directory: `/backend`).
 - **Database & Auth:** Supabase (PostgreSQL) — Google login for identity, plus all app tables.
 - **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON.
@@ -82,7 +86,11 @@ npm run test:gemini [path]     # classify a local image, print tags + target fil
 npm run renew:channels         # renew expiring Drive watch channels (run hourly in prod)
 ```
 
-`npm run test:gemini` only needs `GEMINI_API_KEY`; the server needs the full `.env`. Requirements are listed in `backend/.env.example` and explained in ForDev.md. There is no frontend tooling and no automated test suite yet — verification so far is the manual probes above plus curl against a running server.
+Plus `npm run token -- <email> <password>` to mint a Supabase access token for curling the authed routes.
+
+From `frontend/`: `npm run dev` (Vite), `npm run build` (`tsc -b && vite build`), `npm run lint` (oxlint).
+
+`npm run test:gemini` and `npm run token` need only their own vars; the server needs the full `.env`. Requirements are listed in `backend/.env.example` and explained in ForDev.md. There is no automated test suite yet — verification so far is the manual probes above plus curl against a running server.
 
 ## API surface
 

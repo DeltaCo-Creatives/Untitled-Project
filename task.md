@@ -2,7 +2,7 @@
 
 Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md](CLAUDE.md). Manual setup steps (Supabase, Google Cloud, secrets) live in [ForDev.md](ForDev.md).
 
-**Where things stand:** the backend is built for Loops A and B. Remaining work is the frontend, payments, and running the whole thing against real credentials for the first time.
+**Where things stand:** the backend is built for Loops A and B. The frontend is a designed UI shell with **mocked authentication** and no backend calls. Remaining work: make frontend auth real, wire the two halves together, payments, and a first run against live credentials.
 
 ## Phase 0 — Core Webhook + AI Loop (backend)
 
@@ -47,25 +47,25 @@ Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md
 - [ ] Configure Google OAuth consent screen + client (ForDev.md §3)
 - [ ] Begin Google restricted-scope verification if launching publicly — long lead time
 
-**Frontend**
-- [x] Scaffold React + Vite app in `frontend/` (Vercel-ready, Root Directory `frontend`)
-- [x] Supabase client + "Login with Google" flow
-- [x] Auth session handling, protected routes/layout
-- [ ] Connect-Drive step: call `/api/auth/google/start`, redirect to consent, handle the `?connected=1` / `?error=` return
-- [ ] Google Picker API integration: pick Raw Assets folder, pick Destination folder
-- [x] Onboarding flow: login → pick folders → confirm → trigger watch registration → success state
-- [ ] Folder pickers backed by `GET /api/drive/folders`, saving via `POST /api/drive/config`
+**Frontend** — the UI shell is built, but **auth is mocked and nothing calls the backend**
+- [x] Scaffold React 19 + Vite + Tailwind 4 in `frontend/` (Vercel-ready, Root Directory `frontend`)
+- [x] Supabase client module, `AuthContext`, `ProtectedRoute`, routing
+- [x] Login, Onboarding (3-step) and Dashboard screens designed
+- [ ] **Replace the dummy auth in `AuthContext.signInWithGoogle`** — it fabricates a fake user with `access_token: 'dummy-token'` instead of calling `supabase.auth.signInWithOAuth({ provider: 'google' })`. The backend rejects that token with 401, so nothing works until this is real.
+- [ ] Add `VITE_API_URL` plus an API helper that sends `Authorization: Bearer <supabase access token>`
+- [ ] Connect-Drive step: `POST /api/auth/google/start`, redirect to consent, handle `?connected=1` / `?error=` on return
+- [ ] Folder pickers backed by `GET /api/drive/folders`, saved via `POST /api/drive/config` — replaces the local-state-only selection in `Onboarding.tsx`, which still has a `TODO` where the API call belongs
 - [ ] Kick off `POST /api/drive/watch` to finish onboarding
 
 ## Phase 3 — Dashboard & Account Management (frontend)
 
-- [x] Dashboard: show currently watched Raw folder + Destination folder
+The screens exist as static UI. None of them read real data yet.
+
+- [x] Dashboard, settings and activity screens designed, including empty/error states
 - [ ] Dashboard reading `GET /api/me` (connection, folders, watch status, subscription)
-- [x] Settings: change folders, disconnect Drive, delete account
-- [x] Activity view (optional): log of renamed/moved files — store only filenames/tags/timestamps in Supabase, never image bytes (Zero-Retention still applies to logs)
 - [ ] Activity list from `GET /api/activity` (filenames + tags only)
-- [x] Error/empty states (no folders configured yet, Drive disconnected, subscription inactive)
-- [ ] Error/empty states: no folders yet, Drive disconnected, watch expired, trial ended
+- [ ] Settings actions wired: change folders, disconnect Drive (`DELETE /api/auth/google`), delete account
+- [ ] Empty/error states driven by real state rather than placeholders
 
 ## Phase 4 — Payments (Lemon Squeezy or Paddle)
 

@@ -4,6 +4,8 @@ Everything you need to do by hand to get the backend running. Work top to bottom
 
 The backend code is fully built — nothing here asks you to write code. This is account setup, database creation, and secrets.
 
+For step-by-step help getting any single credential (and what to do if one leaks), see [tutorial.md](tutorial.md).
+
 ---
 
 ## 0. Prerequisites
@@ -203,6 +205,24 @@ create trigger set_updated_at
 
 ---
 
+## 3b. Supabase — enable Google login
+
+§3 authorized the *backend* to touch Drive. Logging **into the app** is a separate flow that Supabase runs, and it needs its own Google config.
+
+1. In Google Cloud → **Credentials**, open the OAuth client from §3 and add a second **Authorized redirect URI**:
+   ```
+   https://ckskwjtjydaqewwojsfj.supabase.co/auth/v1/callback
+   ```
+   One client can serve both flows — you don't need two.
+2. Supabase dashboard → **Authentication → Providers → Google** → enable it, paste the same **Client ID** and **Client secret**, save.
+3. Supabase dashboard → **Authentication → URL Configuration**:
+   - **Site URL**: `http://localhost:5173`
+   - **Redirect URLs**: add `http://localhost:5173/**` (add your Vercel URL here later)
+
+Skip step 3 and Google login will bounce to an error page instead of back into your app.
+
+---
+
 ## 4. Gemini API key
 
 1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → **Create API key**.
@@ -279,6 +299,25 @@ Expect `200`. Send a wrong token and expect `403`.
 
 ---
 
+## 7b. Webhook domain verification — expect this blocker
+
+Google requires the domain receiving Drive push notifications to be **verified and registered in your Cloud project**. When it isn't, `changes.watch` is rejected with something like `Unauthorized WebHook callback channel` — that failure is Google refusing the address, not a bug in the backend.
+
+The catch: you can only verify a domain you control, which rules out `*.ngrok-free.app` and DigitalOcean's default `*.ondigitalocean.app`.
+
+**So you need a domain you own — for local development as well as production.** Once you have one:
+
+1. Verify it in [Google Search Console](https://search.google.com/search-console) via a DNS TXT record.
+2. Add it under Google Cloud Console → **APIs & Services → Domain verification**.
+3. Point a subdomain at your local tunnel:
+   - **ngrok paid** — reserve a custom domain, e.g. `dev.yourdomain.com`
+   - **Cloudflare Tunnel** — free if your DNS is on Cloudflare, gives a stable named subdomain
+4. Use that HTTPS URL as `DRIVE_WEBHOOK_URL`.
+
+Accounts differ on whether a plain free ngrok URL is ever accepted, so if one works for you treat it as luck, not the plan. Budget a domain (~$10–15/yr) — §3's consent screen and §11's privacy policy need one regardless.
+
+---
+
 ## 8. Prove the pipeline end to end
 
 The Gemini leg alone, no Google account needed:
@@ -289,7 +328,13 @@ cd backend && npm run test:gemini
 
 It prints the tags and the filename the pipeline would rename to. Drop a real photo at `backend/test-assets/sample.jpg` first for a meaningful result, or pass a path: `npm run test:gemini /path/to/photo.jpg`.
 
-The full loop needs an authenticated user, which means the frontend (not built yet). Until then you can drive it manually. Create a test user under **Authentication → Users** in Supabase, get an access token for them, then:
+The full loop needs an authenticated user. Create a test user under **Authentication → Users** in Supabase (set a password), then mint a token:
+
+```bash
+cd backend && npm run token -- you@example.com yourpassword
+```
+
+That prints an access token (needs `SUPABASE_ANON_KEY` in `.env`). Use it as `$TOKEN` below:
 
 ```bash
 TOKEN="paste-supabase-access-token"
@@ -364,7 +409,15 @@ Set this up before you have real users — it is the most likely cause of "it ju
 
 **Frontend → Vercel**
 - Connect the same repo, **Root Directory** `frontend`
-- Set `CORS_ORIGINS` on the backend to the Vercel domain
+- Framework preset Vite; build `npm run build`; output `dist`
+- Environment variables (all `VITE_*` values are public — they ship to the browser, so never put the service_role key here):
+  ```
+  VITE_SUPABASE_URL=https://ckskwjtjydaqewwojsfj.supabase.co
+  VITE_SUPABASE_ANON_KEY=<anon key>
+  VITE_GOOGLE_CLIENT_ID=<same client id>
+  ```
+- Then, back on the backend: set `CORS_ORIGINS` and `FRONTEND_URL` to the Vercel domain
+- And in Supabase → **Authentication → URL Configuration**: add the Vercel URL to Site URL / Redirect URLs
 
 ---
 
@@ -378,3 +431,46 @@ Things that were open questions and are now settled in code — change them deli
 - **Activity history is kept, metadata only.** It's needed for idempotency anyway; it stores filenames and tags, never pixels.
 - **Duplicate filenames are allowed.** Two similar images can both become `portrait_woman-smiling.jpg`; Drive keeps them distinct by ID. Add a collision suffix later if it bothers users.
 - **Not handled yet:** Shared Drives (My Drive only, via `restrictToMyDrive`), and the payment provider webhook — that waits on the Lemon Squeezy vs Paddle decision. The subscription gate itself is provider-agnostic and already in place.
+
+---
+
+## 13. Remaining setup checklist
+
+Ordered by dependency — each step unblocks the next. Nothing here needs code written.
+
+**Do first (5 min, security)**
+1. [ ] Reset the Postgres password you pasted into chat — Supabase → Project Settings → Database → Reset database password. Not used by the app, but treat it as burned.
+
+**Get the backend booting (~30 min)**
+2. [ ] Run the §2 migration in the Supabase SQL Editor
+3. [ ] Copy `service_role` + `anon` keys into `backend/.env`
+4. [ ] Create a Gemini key (§4) → `GEMINI_API_KEY`
+5. [ ] `cd backend && npm run dev` → expect "DriveTag AI backend started"
+6. [ ] `npm run test:gemini` with a real photo in `backend/test-assets/sample.jpg` — proves the AI leg
+
+**Google OAuth (~45 min)**
+7. [ ] Cloud project + enable Drive API (§3)
+8. [ ] Consent screen: External, scope `.../auth/drive`, add yourself as a test user
+9. [ ] OAuth client (Web) with **both** redirect URIs — the backend callback and the Supabase one (§3, §3b)
+10. [ ] Client ID/secret into `backend/.env` **and** Supabase → Auth → Providers → Google
+11. [ ] Supabase → Auth → URL Configuration: Site URL + redirect allowlist (§3b)
+
+**Make webhooks actually reachable (the slow one)**
+12. [ ] Buy a domain if you don't have one — needed for webhook verification, the consent screen, and the privacy policy
+13. [ ] Verify it in Search Console + Cloud Console → Domain verification (§7b)
+14. [ ] Tunnel a subdomain to localhost:3001 (ngrok paid or Cloudflare Tunnel) → `DRIVE_WEBHOOK_URL`
+15. [ ] Full loop test per §8: connect Drive, set folders, start watch, drop an image, check `/api/activity`
+
+**Frontend wiring (code, not setup)**
+16. [ ] The frontend has no backend calls yet — no `VITE_API_URL`, no `fetch` to `/api/*`. Onboarding and dashboard screens render but do nothing. This is the largest remaining build task.
+17. [ ] Add `VITE_API_URL`, send the Supabase access token as `Authorization: Bearer`, and wire: connect-Drive, folder pickers, watch toggle, `/api/me`, `/api/activity`
+
+**Production**
+18. [ ] Backend → DigitalOcean App Platform, Source Directory `/backend` (§11)
+19. [ ] Frontend → Vercel, Root Directory `frontend` (§11)
+20. [ ] Production redirect URI + webhook URL; re-register every watch channel after the domain changes
+21. [ ] Schedule `npm run renew:channels` hourly (§9) — without this, tagging silently dies within days
+22. [ ] Privacy policy + terms on your domain
+23. [ ] Pick Lemon Squeezy or Paddle, then build the billing webhook
+
+**Costs to expect:** domain ~$10–15/yr · ngrok paid ~$8/mo (or Cloudflare Tunnel free) · Supabase free tier fine to start · DigitalOcean App Platform ~$5/mo · Gemini Flash pay-per-use (the free tier's rate limits will throttle a real workload, so plan on enabling billing).

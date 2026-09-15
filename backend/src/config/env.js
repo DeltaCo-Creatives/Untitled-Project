@@ -45,6 +45,8 @@ export const env = {
   supabase: {
     url: required("SUPABASE_URL"),
     serviceRoleKey: required("SUPABASE_SERVICE_ROLE_KEY"),
+    // Only used by scripts/get-token.js; the server itself never needs it.
+    anonKey: optional("SUPABASE_ANON_KEY", ""),
   },
 
   security: {
