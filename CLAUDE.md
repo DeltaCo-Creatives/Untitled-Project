@@ -29,7 +29,7 @@ Nothing has been run against real Google/Supabase credentials yet — [ForDev.md
 - **Google Drive:** `googleapis` SDK.
 - **Payments:** Lemon Squeezy or Paddle (Merchant of Record). *Not integrated yet.*
 
-Both `frontend/` and `backend/` deploy from the same GitHub repo/branch (`main`) — do not split them into separate repos or branches.
+Both `frontend/` and `backend/` deploy from the same GitHub repo/branch (`production`) — do not split them into separate repos or branches.
 
 ## Architecture
 
