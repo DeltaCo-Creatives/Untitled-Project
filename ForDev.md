@@ -6,13 +6,15 @@ The backend code is fully built — nothing here asks you to write code. This is
 
 For step-by-step help getting any single credential (and what to do if one leaks), see [tutorial.md](tutorial.md).
 
+> **Where "Done" was verified.** The Done markers and checked boxes below were verified in the environment where setup was performed. `.env` files are gitignored, so they don't arrive with a `git clone` or `git pull` — a fresh or different working copy starts with blank credentials. Check yours with `cd backend && npm run dev`, which names any missing variable. Per-machine state and next steps: [Handover.md](Handover.md).
+
 ---
 
 ## 0. Prerequisites
 
 - [x] Node.js 18+ (`node -v`) — v22.18.0
-- [ ] A Google account
-- [ ] A Supabase account (free tier is fine)
+- [x] A Google account
+- [x] A Supabase account (free tier is fine) — project `ckskwjtjydaqewwojsfj`
 - [x] ngrok CLI installed globally (`npm install -g ngrok`) — **not yet authenticated**, see §7
 
 ```bash
@@ -243,7 +245,7 @@ Skip step 3 and Google login will bounce to an error page instead of back into y
 1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → **Create API key**.
 2. Copy it — this is `GEMINI_API_KEY`.
 
-> **Model name changed underneath us.** `gemini-2.5-flash` (this doc's old default) now 404s with "no longer available to new users... use models/gemini-3.6-flash". Updated `GEMINI_MODEL` everywhere — `.env`, `.env.example`, and the fallback in `src/config/env.js` — to `gemini-3.6-flash`. If Google moves the goalposts again, the error message from Gemini itself names the current model to switch to.
+> **Model name changed underneath us.** `gemini-2.5-flash` (this doc's old default) now 404s with "no longer available to new users... use models/gemini-3.6-flash". Updated `GEMINI_MODEL` to `gemini-3.6-flash` in `.env` and in the fallback in `src/config/env.js`. (The `.env.example` templates were deleted later in the same commit.) A working copy whose `.env` still says `gemini-2.5-flash` overrides the new default and will 404 — change or delete that line. If Google moves the goalposts again, the error message from Gemini itself names the current model to switch to.
 
 ---
 
@@ -273,14 +275,11 @@ node -e "console.log('GOOGLE_DRIVE_WEBHOOK_TOKEN=' + require('crypto').randomByt
 
 ## 6. Fill in backend/.env
 
-```bash
-cd backend
-cp .env.example .env   # done — backend/.env exists
-```
+Create `backend/.env` by hand. The `.env.example` template this step used to copy was deleted in commit `0bdd63d`; every variable is listed in [tutorial.md](tutorial.md)'s quick reference.
 
 Every required var is now filled in: `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_ANON_KEY` (§1), `TOKEN_ENCRYPTION_KEY`/`OAUTH_STATE_SECRET`/`GOOGLE_DRIVE_WEBHOOK_TOKEN` (§5), `GEMINI_API_KEY` (§4), and `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (§3, matches the downloaded OAuth client JSON exactly).
 
-Only `DRIVE_WEBHOOK_URL` is still the `.env.example` placeholder — it doesn't block booting (it's just a string check, not a live check), but Drive push notifications won't reach you until it's a real tunnel/domain URL (§7, §7b).
+Only `DRIVE_WEBHOOK_URL` is still a placeholder — it doesn't block booting (it's just a string check, not a live check), but Drive push notifications won't reach you until it's a real tunnel/domain URL (§7, §7b).
 
 **Verify:** confirmed — the backend now **fully boots**. `npm start` logs `{"level":"info","message":"DriveTag AI backend started",...}` and `GET /health` returns `{"status":"ok"}`. This is the first time every required var has been present.
 
@@ -288,10 +287,7 @@ Only `DRIVE_WEBHOOK_URL` is still the `.env.example` placeholder — it doesn't 
 
 ## 6b. Fill in frontend/.env
 
-```bash
-cd frontend
-cp .env.example .env   # done — frontend/.env exists
-```
+Create `frontend/.env` by hand with the three variables below. The `.env.example` template this step used to copy was deleted in commit `0bdd63d`.
 
 All three are filled in: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (same values as backend's `SUPABASE_URL`/`SUPABASE_ANON_KEY`, §1), and `VITE_GOOGLE_CLIENT_ID` (same value as backend's `GOOGLE_CLIENT_ID`, §3 — never the client *secret*).
 
@@ -445,8 +441,8 @@ Set this up before you have real users — it is the most likely cause of "it ju
 **Backend → DigitalOcean App Platform**
 - Connect the GitHub repo, set **Source Directory** to `/backend`
 - Build command `npm ci`, run command `npm start`
-- Set every var from `.env.example` as encrypted app-level env vars
-- Update `GOOGLE_OAUTH_REDIRECT_URI` and `DRIVE_WEBHOOK_URL` to the production domain, and add the new redirect URI to the Google OAuth client
+- Set every backend variable (listed in [tutorial.md](tutorial.md)) as encrypted app-level env vars
+- Update `GOOGLE_OAUTH_REDIRECT_URI` and `DRIVE_WEBHOOK_URL` to the production domain, and add the new redirect URI to the Google OAuth client — the exact values for `api.drivetag-ai.com` are in [domainguide.md](domainguide.md) §5–§6
 - Existing watch channels still point at the old (ngrok) URL — re-register them after cutover
 
 **Frontend → Vercel**
@@ -481,13 +477,13 @@ Things that were open questions and are now settled in code — change them deli
 
 Ordered by dependency — each step unblocks the next. Nothing here needs code written.
 
-**Already done in this environment**
+**Already done — in the environment where setup was performed (see the note at the top)**
 - [x] `backend/` and `frontend/` dependencies installed (§0)
 - [x] `ngrok` CLI installed globally — not yet authenticated (§7)
 - [x] Every var `backend/.env` requires to boot is filled in: local secrets (§5), Supabase (§1), Gemini (§4), Google OAuth client (§3) — **the backend now fully boots**, `npm start` logs "DriveTag AI backend started" and `GET /health` returns `{"status":"ok"}`
 - [x] `frontend/.env` fully filled in too: Supabase URL/anon key + Google client ID (§6b)
 - [x] Supabase connectivity live-checked with a read-only query against all 5 tables — all reachable
-- [x] Gemini connectivity live-checked via `npm run test:gemini` — real classification returned. Along the way found `gemini-2.5-flash` is dead (404, Google says use `gemini-3.6-flash`) and fixed the default in `.env`, `.env.example`, and `src/config/env.js`
+- [x] Gemini connectivity live-checked via `npm run test:gemini` — real classification returned. Along the way found `gemini-2.5-flash` is dead (404, Google says use `gemini-3.6-flash`) and fixed the default in `.env` and `src/config/env.js`
 - [x] Frontend `npm run lint` and `npm run build` verified passing (one real bug found and fixed: `AuthContext.tsx` needed `import type { ReactNode }`)
 - [x] Supabase Google-login wiring (§3b) — second redirect URI on the Google OAuth client, Supabase's Google provider, and the Site URL — all live-verified by hitting Supabase's and Google's real authorize endpoints, not just checked in the dashboards
 
@@ -495,6 +491,7 @@ Ordered by dependency — each step unblocks the next. Nothing here needs code w
 
 **Do first (5 min, security)**
 1. [ ] **Reset the Postgres database password** — Supabase → Project Settings → Database → Reset database password. You've now pasted it into chat twice; the app never uses the raw Postgres connection string (it talks to Supabase over the REST API with the service_role key), so this doesn't block anything below, but treat the password as burned and rotate it anyway.
+   - [ ] If the Gemini API key in use is the one that was pasted into chat, delete it in AI Studio and create a new one.
 
 **Get the backend booting (~30 min) — done**
 2. [x] Run the §2 migration in the Supabase SQL Editor — tables exist and are reachable
@@ -511,14 +508,14 @@ Ordered by dependency — each step unblocks the next. Nothing here needs code w
 11. [x] Supabase → Auth → URL Configuration: Site URL + redirect allowlist (§3b) — confirmed via dashboard save toast
 
 **Make webhooks actually reachable (the slow one)**
-12. [ ] Buy a domain if you don't have one — needed for webhook verification, the consent screen, and the privacy policy
-13. [ ] Verify it in Search Console + Cloud Console → Domain verification (§7b)
+12. [x] Buy a domain — `drivetag-ai.com` on Namecheap; wiring steps in [domainguide.md](domainguide.md)
+13. [ ] Verify it in Search Console + Cloud Console → Domain verification ([domainguide.md](domainguide.md) §4)
 14. [ ] Authenticate ngrok (`ngrok config add-authtoken <token>` — CLI already installed) and tunnel a subdomain to localhost:3001 (ngrok paid or Cloudflare Tunnel) → `DRIVE_WEBHOOK_URL`
 15. [ ] Full loop test per §8: connect Drive, set folders, start watch, drop an image, check `/api/activity`
 
 **Frontend wiring (code, not setup)**
 16. [x] `frontend/.env` created and fully filled in (§6b)
-17. [ ] The frontend has no backend calls yet — no `VITE_API_URL`, no `fetch` to `/api/*`. Onboarding and dashboard screens render but do nothing. This is the largest remaining build task.
+17. [ ] The frontend has no backend calls yet — no `VITE_API_URL`, no `fetch` to `/api/*`. Onboarding and dashboard screens render but do nothing, and login itself is mocked (`AuthContext.signInWithGoogle` fabricates a `dummy-token` user). This is the largest remaining build task.
 18. [ ] Add `VITE_API_URL`, send the Supabase access token as `Authorization: Bearer`, and wire: connect-Drive, folder pickers, watch toggle, `/api/me`, `/api/activity`
 
 **Production**

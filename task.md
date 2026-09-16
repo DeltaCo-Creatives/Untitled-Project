@@ -1,8 +1,17 @@
 # DriveTag AI — Task List
 
-Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md](CLAUDE.md). Manual setup steps (Supabase, Google Cloud, secrets) live in [ForDev.md](ForDev.md).
+Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md](CLAUDE.md). Manual setup steps (Supabase, Google Cloud, secrets) live in [ForDev.md](ForDev.md). Current state and next steps: [Handover.md](Handover.md).
 
-**Where things stand:** the backend is built for Loops A and B. The frontend is a designed UI shell with **mocked authentication** and no backend calls. Remaining work: make frontend auth real, wire the two halves together, payments, and a first run against live credentials.
+**Where things stand:** the backend is built for Loops A and B. The frontend is a designed UI shell with **mocked authentication** and no backend calls. Supabase, the Google OAuth client, Gemini and Supabase's Google login were set up and live-verified in one environment — `.env` files don't sync, so other working copies need them copied over. `drivetag-ai.com` is purchased. Remaining work: make frontend auth real, wire the two halves together, wire the domain and deploy, payments, and a first full Drive loop.
+
+## Environment & housekeeping
+
+- [ ] Copy `backend/.env` and `frontend/.env` to every working copy — setup was done in one environment only, and all copies must share one `TOKEN_ENCRYPTION_KEY`
+- [ ] Restore `backend/.env.example` and `frontend/.env.example` (deleted in `0bdd63d`), and fix the `config/env.js` error message that still points to it
+- [ ] Change any local `GEMINI_MODEL=gemini-2.5-flash` (retired) to the new default `gemini-3.6-flash`
+- [ ] Reset the Supabase Postgres password; rotate the Gemini key if it's the one pasted into chat
+- [ ] Untrack `.claude/settings.local.json` (a personal settings file) and delete the stale local `prod` branch
+- [x] GSAP agent skills installed in `.claude/skills/`, pinned by `skills-lock.json`
 
 ## Phase 0 — Core Webhook + AI Loop (backend)
 
@@ -15,6 +24,7 @@ Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md
 - [x] Idempotency guard — `processed_files` unique `(user_id, file_id)` claim before processing
 - [x] Per-file error isolation so one bad image doesn't abort a sweep
 - [x] Image size ceiling (skips files too large for an inline Gemini request)
+- [x] Gemini classification live-verified — with a 1×1 placeholder image only; retest with a real photo
 - [ ] First real end-to-end run against live Google + Supabase credentials (follow ForDev.md)
 
 ## Phase 1 — Google Drive integration (backend)
@@ -43,8 +53,10 @@ Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md
 - [x] `POST/DELETE /api/drive/watch` — start/stop watching
 - [x] `DELETE /api/auth/google` — disconnect: stop watch, revoke at Google, delete credentials
 - [x] `GET /api/me` and `GET /api/activity` for the dashboard
-- [ ] Create the Supabase project and run the migration (ForDev.md §1–2)
-- [ ] Configure Google OAuth consent screen + client (ForDev.md §3)
+- [x] Create the Supabase project and run the migration (ForDev.md §1–2) — all tables live-verified
+- [x] Google OAuth client with localhost + Supabase redirect URIs (ForDev.md §3)
+- [x] Supabase Google login provider + URL configuration, live-verified at protocol level (ForDev.md §3b)
+- [ ] Confirm the consent screen's test-user list by completing a real login
 - [ ] Begin Google restricted-scope verification if launching publicly — long lead time
 
 **Frontend** — the UI shell is built, but **auth is mocked and nothing calls the backend**
@@ -62,6 +74,7 @@ Full scope, frontend + backend, tracked against the two SaaS loops in [CLAUDE.md
 The screens exist as static UI. None of them read real data yet.
 
 - [x] Dashboard, settings and activity screens designed, including empty/error states
+- [x] `gsap` + `@gsap/react` installed for UI animation (not used yet)
 - [ ] Dashboard reading `GET /api/me` (connection, folders, watch status, subscription)
 - [ ] Activity list from `GET /api/activity` (filenames + tags only)
 - [ ] Settings actions wired: change folders, disconnect Drive (`DELETE /api/auth/google`), delete account
@@ -85,10 +98,12 @@ The screens exist as static UI. None of them read real data yet.
 
 ## Phase 5 — Deployment & Launch
 
-- [ ] Backend on DigitalOcean App Platform (Source Directory `/backend`, encrypted env vars)
-- [ ] Frontend on Vercel (Root Directory `frontend`)
-- [ ] Production `GOOGLE_OAUTH_REDIRECT_URI` + `DRIVE_WEBHOOK_URL`; re-register watch channels after cutover
-- [ ] Custom domain + HTTPS on both
+- [ ] Backend on DigitalOcean App Platform (Source Directory `/backend`, encrypted env vars) — unconfirmed, no live URL recorded
+- [ ] Frontend on Vercel (Root Directory `frontend`) — unconfirmed, no live URL recorded
+- [ ] Production `GOOGLE_OAUTH_REDIRECT_URI` + `DRIVE_WEBHOOK_URL`; re-register watch channels after cutover ([domainguide.md](domainguide.md) §5–§6)
+- [x] Domain purchased: `drivetag-ai.com` (Namecheap)
+- [ ] DNS: `drivetag-ai.com` → Vercel, `api.drivetag-ai.com` → DigitalOcean, SSL auto-issued ([domainguide.md](domainguide.md) §1–§3)
+- [ ] Verify the domain in Search Console + Cloud Console — unblocks Drive webhooks ([domainguide.md](domainguide.md) §4)
 - [ ] `helmet` + rate limiting on public endpoints (exclude `/webhook/drive` — Google bursts)
 - [ ] Error monitoring beyond stdout logs (e.g. Sentry)
 - [ ] Landing page copy — lead with Zero-Retention, it's the trust pitch for a tool touching client assets

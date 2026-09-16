@@ -12,24 +12,26 @@ DriveTag AI is a B2B micro-SaaS that automatically organizes visual assets for c
 
 ## Current State
 
-The backend is complete for Loops A and B: Drive OAuth, folder config, watch-channel lifecycle, the change-feed sweep, Gemini classification, and rename/move all exist and are wired together.
+**[Handover.md](Handover.md) is the authoritative snapshot of current state and next steps — read it before starting work, and update it when state changes.** In brief:
 
-The frontend exists as a React 19 + Vite + Tailwind shell (`Login`, `Onboarding`, `Dashboard` pages, `AuthContext`, `ProtectedRoute`, Supabase client) but **makes no calls to the backend** — there is no `VITE_API_URL` and no `fetch` against `/api/*`. Wiring those two halves together is the largest open task; don't assume a screen works just because it renders.
+- **Backend:** complete for Loops A and B — Drive OAuth, folder config, watch-channel lifecycle, the change-feed sweep, Gemini classification, and rename/move are all wired together. The full Drive loop has never run against a real Drive.
+- **Frontend:** a React 19 + Vite + Tailwind shell (`Login`, `Onboarding`, `Dashboard`, `AuthContext`, `ProtectedRoute`) that **makes no calls to the backend** and uses **mocked auth** — `AuthContext.signInWithGoogle` fabricates a `dummy-token` user, and Onboarding's folder IDs are hardcoded. Don't assume a screen works because it renders. Wiring the frontend to real auth and the API is the largest open task.
+- **Credentials:** accounts were set up and live-verified in a *different* working copy. `.env` files are gitignored and don't travel through git, so a given checkout may have blank credentials — `npm run dev` names what's missing. Both `.env.example` templates were deleted in commit `0bdd63d`; [tutorial.md](tutorial.md) lists every variable.
+- **Not built:** the payment-provider webhook (Lemon Squeezy vs Paddle undecided; the subscription gate it feeds exists).
+- **Domain:** `drivetag-ai.com` is purchased but not yet wired — see [domainguide.md](domainguide.md).
 
-Also not built: the payment-provider webhook, pending the Lemon Squeezy vs Paddle decision (the subscription gate it feeds is already in place).
-
-Nothing has been run against real Google/Supabase credentials yet — [ForDev.md](ForDev.md) is the ordered setup runbook and [tutorial.md](tutorial.md) covers how to obtain each individual credential — keep both current when setup changes. See [task.md](task.md) for remaining scope.
+Other docs: [task.md](task.md) (scope checklist), [ForDev.md](ForDev.md) (setup runbook + SQL), [tutorial.md](tutorial.md) (per-credential guide). Keep them current when setup changes.
 
 ## Tech Stack & Hosting
 
-- **Frontend:** React 19 + Vite + Tailwind 4 + react-router, TypeScript. Hosted on Vercel (Root Directory: `frontend`). UI shell only — not yet calling the API. Lint via `oxlint`. Visitor analytics via `@vercel/analytics` in `src/components/RouteAnalytics.tsx`. Animation via GSAP (`gsap` + `@gsap/react`, use the `useGSAP` hook for cleanup) — project GSAP skills live in `.claude/skills/`.
+- **Frontend:** React 19 + Vite + Tailwind 4 + react-router, TypeScript. Hosted on Vercel (Root Directory: `frontend`). Lint via `oxlint`. Visitor analytics via `@vercel/analytics` in `src/components/RouteAnalytics.tsx`. Animation via GSAP (`gsap` + `@gsap/react`, use the `useGSAP` hook for cleanup) — project GSAP skills live in `.claude/skills/`.
 - **Backend:** Node.js + Express 5 (ESM). Hosted on DigitalOcean App Platform (Source Directory: `/backend`).
-- **Database & Auth:** Supabase (PostgreSQL) — Google login for identity, plus all app tables.
-- **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON.
+- **Database & Auth:** Supabase (PostgreSQL), project `ckskwjtjydaqewwojsfj` — Google login for identity, plus all app tables.
+- **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON. Default model `gemini-3.6-flash` — Google retired `gemini-2.5-flash` for new users, and a stale `GEMINI_MODEL` in a local `.env` overrides the default.
 - **Google Drive:** `googleapis` SDK.
 - **Payments:** Lemon Squeezy or Paddle (Merchant of Record). *Not integrated yet.*
 
-Both `frontend/` and `backend/` deploy from the same GitHub repo/branch (`production`) — do not split them into separate repos or branches.
+Both `frontend/` and `backend/` deploy from the same GitHub repo/branch (`production`) — do not split them into separate repos or branches. `staging` also exists on the remote.
 
 ## Architecture
 
@@ -54,10 +56,21 @@ backend/
 │   │   └── pipeline.service.js     Loop B orchestration
 │   ├── repositories/          one module per table, all Supabase access
 │   └── utils/                 logger (redacting), crypto (AES-GCM + HMAC state), filename
-├── scripts/
-│   ├── test-gemini.js         standalone Gemini probe
-│   └── renew-channels.js      cron entrypoint for channel renewal
-└── supabase/migrations/0001_init.sql   schema + RLS (source of truth)
+└── scripts/
+    ├── test-gemini.js         standalone Gemini probe
+    ├── renew-channels.js      cron entrypoint for channel renewal
+    └── get-token.js           mint a Supabase access token for curl testing
+
+frontend/src/
+├── App.tsx                    routes: / (Login), /onboarding, /dashboard (protected)
+├── contexts/AuthContext.tsx   session state — currently a dummy login
+├── components/
+│   ├── ProtectedRoute.tsx
+│   └── RouteAnalytics.tsx     Vercel Analytics + URL redaction
+├── lib/supabase.ts            anon-key client
+└── pages/                     Login, Onboarding, Dashboard
+
+supabase/migrations/0001_init.sql   schema + RLS (source of truth), at the repo root
 ```
 
 Layering is strict: routes handle HTTP, services own external APIs and orchestration, repositories own all Supabase queries. Routes should not query Supabase directly.
@@ -74,6 +87,7 @@ These were deliberate and are easy to "fix" wrongly:
 - **The subscription gate fails closed** and is checked before any Gemini spend. A trial row is created on first Drive connect so onboarding works pre-billing.
 - **Vercel Analytics gets explicit `route`/`path` props and a `beforeSend` redactor** (`frontend/src/components/RouteAnalytics.tsx`). The script's auto-tracking only hooks `history.pushState`, so `<Navigate replace />` redirects — including login → dashboard — went uncounted. The redactor strips the hash and every query param except `utm_*`, because OAuth returns put Supabase tokens and `code`/`state` in the URL. Don't swap it for a bare `<Analytics />`. In dev, StrictMode logs the first view twice; production sends one.
 - **Full `drive` scope is required**, not `drive.file` — the app must read files other people drop in the folder. This makes the app subject to Google restricted-scope verification; see the warning in ForDev.md.
+- **The Drive webhook needs a Google-verified domain.** Drive refuses to register a watch on an address whose domain isn't verified in the Cloud project, so free ngrok URLs and `*.ondigitalocean.app` can't receive notifications. Production is planned as `api.drivetag-ai.com`.
 
 ## Commands
 
@@ -85,13 +99,12 @@ npm run dev                    # start with nodemon (auto-reload)
 npm start                      # start without auto-reload
 npm run test:gemini [path]     # classify a local image, print tags + target filename
 npm run renew:channels         # renew expiring Drive watch channels (run hourly in prod)
+npm run token -- <email> <pw>  # mint a Supabase access token for curling the authed routes
 ```
 
-Plus `npm run token -- <email> <password>` to mint a Supabase access token for curling the authed routes.
+From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && vite build`), `npm run lint` (oxlint), `npm run preview` (serve the production build). `.claude/launch.json` defines the dev server and production preview as preview-server configs.
 
-From `frontend/`: `npm run dev` (Vite), `npm run build` (`tsc -b && vite build`), `npm run lint` (oxlint).
-
-`npm run test:gemini` and `npm run token` need only their own vars; the server needs the full `.env`. Requirements are listed in `backend/.env.example` and explained in ForDev.md. There is no automated test suite yet — verification so far is the manual probes above plus curl against a running server.
+`npm run test:gemini` and `npm run token` need only their own vars; the server needs the full `backend/.env` and refuses to boot, naming the missing variables, when it's incomplete. The variable list lives in [tutorial.md](tutorial.md). There is no automated test suite — verification so far is manual probes, curl against a running server, and browser checks.
 
 ## API surface
 
@@ -114,3 +127,5 @@ From `frontend/`: `npm run dev` (Vite), `npm run build` (`tsc -b && vite build`)
 - Secrets come from `config/env.js`, never `process.env` at a call site.
 - Log with `utils/logger.js` (structured JSON, auto-redacts token/secret/key fields) rather than `console.log`. Never log image bytes.
 - Repositories throw on Supabase errors with a contextual message; routes let Express 5 forward rejections to `errorHandler`.
+- Never paste or commit credentials. `.env` files are gitignored; production values go in DigitalOcean/Vercel encrypted env settings.
+- `.claude/skills/gsap-*` are third-party files pinned by `skills-lock.json` — update with `npx skills update`, don't hand-edit.

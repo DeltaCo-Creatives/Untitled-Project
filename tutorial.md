@@ -1,6 +1,6 @@
 # tutorial.md — Getting Every Credential
 
-How to obtain each value in `backend/.env` and `frontend/.env.local`, where it comes from, and how to check it works. For the wider setup order (database migration, deployment, cron) see [ForDev.md](ForDev.md); this file is only about credentials.
+How to obtain each value in `backend/.env` and `frontend/.env`, where it comes from, and how to check it works. There are no `.env.example` templates in the repo (deleted in commit `0bdd63d`), so the quick-reference table below is the list of variables. For the wider setup order (database migration, deployment, cron) see [ForDev.md](ForDev.md); this file is only about credentials.
 
 ## Three rules
 
@@ -13,7 +13,7 @@ How to obtain each value in `backend/.env` and `frontend/.env.local`, where it c
 | Variable | Where it comes from | Secret? | Status |
 |---|---|---|---|
 | `GEMINI_API_KEY` | Google AI Studio | 🔴 Yes | You fill |
-| `GEMINI_MODEL` | Model ID string, not a credential | No | Verify (see §1) |
+| `GEMINI_MODEL` | Model ID string, not a credential. Code default `gemini-3.6-flash` | No | Optional (see §1) |
 | `GOOGLE_CLIENT_ID` | Google Cloud → Credentials | 🟡 Semi-public | You fill |
 | `GOOGLE_CLIENT_SECRET` | Google Cloud → Credentials | 🔴 Yes | You fill |
 | `GOOGLE_OAUTH_REDIRECT_URI` | You choose; must match Cloud config | No | ✅ Pre-set |
@@ -26,7 +26,9 @@ How to obtain each value in `backend/.env` and `frontend/.env.local`, where it c
 | `OAUTH_STATE_SECRET` | Random, self-generated | 🔴 Yes | ✅ Pre-generated |
 | `FRONTEND_URL`, `CORS_ORIGINS`, `PORT`, `TRIAL_DAYS` | Configuration | No | ✅ Pre-set |
 
-Five blanks to fill: `GEMINI_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `DRIVE_WEBHOOK_URL` (plus `SUPABASE_ANON_KEY` for the token helper).
+The values you obtain from a service are `GEMINI_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `DRIVE_WEBHOOK_URL`, plus `SUPABASE_ANON_KEY` for the token helper. Everything marked Pre-set or Pre-generated is a default or a random secret you create yourself (§5).
+
+`.env` files don't travel through git — each working copy needs its own, and every copy should share the same `TOKEN_ENCRYPTION_KEY`. See [Handover.md](Handover.md) for the current state.
 
 To confirm at any time which are still empty:
 
@@ -61,6 +63,8 @@ cd backend && npm run test:gemini
 ```
 
 ### Which model ID to use
+
+The code defaults to `gemini-3.6-flash`. `gemini-2.5-flash` has been retired for new users and returns 404 — if your `.env` still sets it, change or delete that line. When Google retires a model, the 404 message names its replacement.
 
 `GEMINI_MODEL` is a plain string, and a wrong one fails with a confusing `404 model not found`. Rather than guess, ask your key what it can actually reach:
 
@@ -98,7 +102,7 @@ Both come from the same place. This is a different credential from the Gemini ke
      http://localhost:3001/api/auth/google/callback
      https://ckskwjtjydaqewwojsfj.supabase.co/auth/v1/callback
      ```
-     The first is this backend's Drive flow; the second is Supabase's Google login. One client serves both.
+     The first is this backend's Drive flow; the second is Supabase's Google login. One client serves both. Production adds a third, `https://api.drivetag-ai.com/api/auth/google/callback` ([domainguide.md](domainguide.md) §5).
 5. Copy **Client ID** and **Client secret** into `backend/.env`.
 6. Paste the *same* pair into Supabase → **Authentication → Providers → Google** (enable it there too).
 
@@ -146,7 +150,7 @@ Google will only deliver to a domain that is **verified in your Cloud project**,
 
 **The workable path:**
 
-1. Own a domain (~$10–15/yr). You need one for the consent screen and privacy policy anyway.
+1. Own a domain — done: `drivetag-ai.com`. Its full wiring, including the production value `https://api.drivetag-ai.com/webhook/drive`, is in [domainguide.md](domainguide.md).
 2. Verify it in [Google Search Console](https://search.google.com/search-console) via DNS TXT record.
 3. Add it in Google Cloud Console → **APIs & Services → Domain verification**.
 4. Point a subdomain at your local server:
@@ -185,7 +189,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## 6. Frontend variables
 
-The frontend reads its own file — `frontend/.env.local` (gitignored), template in `frontend/.env.example`:
+The frontend reads its own file — `frontend/.env` (gitignored; `.env.local` also works). There's no template in the repo:
 
 ```
 VITE_SUPABASE_URL=https://ckskwjtjydaqewwojsfj.supabase.co
@@ -195,7 +199,7 @@ VITE_GOOGLE_CLIENT_ID=<client ID from §2>
 
 All three are public — they're compiled into the JavaScript bundle. That's expected and fine. The **service_role key must never appear here.**
 
-You'll also need `VITE_API_URL` (e.g. `http://localhost:3001`) once the frontend starts calling the backend — it doesn't yet, so it isn't in the template.
+You'll also need `VITE_API_URL` (e.g. `http://localhost:3001`) once the frontend starts calling the backend — it doesn't yet.
 
 ---
 

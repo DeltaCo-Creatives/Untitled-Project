@@ -1,5 +1,7 @@
 # domainguide.md — Wiring up drivetag-ai.com
 
+> **Status (2026-09-16): not started.** Every checklist item below is open. The live DigitalOcean and Vercel URLs haven't been recorded, so it's unconfirmed whether the initial deploys this guide assumes exist yet. Fill them in below once known, and update [Handover.md](Handover.md).
+
 You bought `drivetag-ai.com` on Namecheap (plus SSL, DNS, and domain privacy add-ons). This is the walkthrough for pointing it at your live backend (DigitalOcean) and frontend (Vercel), verifying it with Google, and updating every env var that currently still says `localhost` or a placeholder ngrok URL.
 
 This isn't cosmetic — owning and verifying this domain is what unblocks the Drive webhook. ForDev.md §7b and tutorial.md §4 already explained why: Google will only deliver push notifications to a domain you've verified in Cloud Console, and neither `*.ondigitalocean.app` nor a free ngrok subdomain can ever be verified. This domain is the fix.
