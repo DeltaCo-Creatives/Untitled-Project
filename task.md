@@ -92,7 +92,9 @@ The screens exist as static UI. None of them read real data yet.
 - [ ] `helmet` + rate limiting on public endpoints (exclude `/webhook/drive` — Google bursts)
 - [ ] Error monitoring beyond stdout logs (e.g. Sentry)
 - [ ] Landing page copy — lead with Zero-Retention, it's the trust pitch for a tool touching client assets
-- [ ] Terms of Service + Privacy Policy reflecting Zero-Retention, required for Google verification anyway
+- [x] Vercel Web Analytics installed, tracking redirects, with OAuth credentials stripped from reported URLs
+- [ ] Enable Analytics in the Vercel dashboard and redeploy
+- [ ] Terms of Service + Privacy Policy reflecting Zero-Retention, required for Google verification anyway — disclose Vercel Analytics too
 
 ## Decisions resolved in code
 

@@ -458,6 +458,7 @@ Set this up before you have real users — it is the most likely cause of "it ju
   VITE_SUPABASE_ANON_KEY=<anon key>
   VITE_GOOGLE_CLIENT_ID=<same client id>
   ```
+- Enable **Analytics** in the Vercel project (Analytics tab → Enable), then redeploy. The package is already installed and wired; data only appears on Vercel deployments, never on localhost, where it just logs to the console.
 - Then, back on the backend: set `CORS_ORIGINS` and `FRONTEND_URL` to the Vercel domain
 - And in Supabase → **Authentication → URL Configuration**: add the Vercel URL to Site URL / Redirect URLs
 
