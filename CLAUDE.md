@@ -22,7 +22,7 @@ Nothing has been run against real Google/Supabase credentials yet — [ForDev.md
 
 ## Tech Stack & Hosting
 
-- **Frontend:** React 19 + Vite + Tailwind 4 + react-router, TypeScript. Hosted on Vercel (Root Directory: `frontend`). UI shell only — not yet calling the API. Lint via `oxlint`. Visitor analytics via `@vercel/analytics` in `src/components/RouteAnalytics.tsx`.
+- **Frontend:** React 19 + Vite + Tailwind 4 + react-router, TypeScript. Hosted on Vercel (Root Directory: `frontend`). UI shell only — not yet calling the API. Lint via `oxlint`. Visitor analytics via `@vercel/analytics` in `src/components/RouteAnalytics.tsx`. Animation via GSAP (`gsap` + `@gsap/react`, use the `useGSAP` hook for cleanup) — project GSAP skills live in `.claude/skills/`.
 - **Backend:** Node.js + Express 5 (ESM). Hosted on DigitalOcean App Platform (Source Directory: `/backend`).
 - **Database & Auth:** Supabase (PostgreSQL) — Google login for identity, plus all app tables.
 - **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON.
