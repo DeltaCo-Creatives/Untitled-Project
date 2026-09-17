@@ -1,6 +1,6 @@
 # Handover.md — DriveTag AI
 
-**Snapshot:** 2026-09-17 · `production` and `staging` both at `75abc96`, plus uncommitted production-login fixes (⚠️ 7) · repo `github.com/DeltaCo-Creatives/Untitled-Project`
+**Snapshot:** 2026-09-17 · `production` at `579932a` (production-login fixes, ⚠️ 7), `staging` at `75abc96` · repo `github.com/DeltaCo-Creatives/Untitled-Project`
 
 The one-page answer to "what is true right now, and what do I do next". Read this first; it links out to the detailed docs. Update the snapshot line and the tables whenever the state changes.
 
@@ -9,7 +9,10 @@ The one-page answer to "what is true right now, and what do I do next". Read thi
 - **Backend** — feature-complete for onboarding (Loop A) and the webhook → Gemini → rename/move pipeline (Loop B), plus two additions (see ⚠️ 6):
   - a **polling fallback**, so automatic sorting works on localhost without a verified webhook domain;
   - **Organize now**, for images already in the Raw folder.
-- **Production is deployed** — commit `75abc96`: Vercel at `https://drivetag-ai.com`, DigitalOcean at `https://api.drivetag-ai.com`, health 200. **Production login was broken** on 2026-09-17; see ⚠️ 7. The code fixes are made but uncommitted. The dashboard steps (Vercel, Supabase, DigitalOcean, Namecheap DNS) are in [domainguide.md](domainguide.md) §2–§7.
+- **Production** — `579932a` is pushed. **Production login is still broken**; see ⚠️ 7 "Status after the push":
+  - DigitalOcean runs the new backend.
+  - Vercel's build **failed** on the missing `VITE_API_URL`, so `drivetag-ai.com` still serves the old `75abc96` frontend.
+  - None of the dashboard settings are done yet (Vercel, Supabase, DigitalOcean env, Namecheap DNS). The steps are in [domainguide.md](domainguide.md) §2–§7.
 - **Local dev shares the production database** — `backend/.env` points at the production Supabase project. Local `AUTO_SYNC_INTERVAL_SECONDS` is now `0`, and channel renewal only runs with `NODE_ENV=production`, so a laptop can't sweep or renew production users' channels. Don't connect Drive locally with an account you also use in production unless `TOKEN_ENCRYPTION_KEY` matches DigitalOcean's.
 - **Where the accounts stand** — as of 2026-09-17 **no account has connected Drive yet**, so the full loop (connect → pick folders → drop image → renamed) has still never run.
 - **Frontend** — full **pastel "Lavender garden" redesign** (light theme, Fredoka + Nunito, GSAP animation on every page) across Landing `/`, `/login`, `/onboarding`, `/connect`, `/dashboard`, all wired to real Supabase auth and the backend API. Vercel Analytics is wired.
@@ -112,6 +115,17 @@ Production is unchanged: `CORS_ORIGINS` only, which requires `NODE_ENV=productio
 - **Watch races:** start, pause, renew and disconnect for one user now run one at a time (a per-user lock in `driveWatch.service.js`). A channel registered at Google but not saved is stopped again. Before this, a disconnect or pause during a renewal or start could leave a live channel nobody could stop.
 - **Timeouts:** Drive calls time out after 60s (downloads 120s) and Gemini after 90s. Before, a hung request stalled that user's sorting indefinitely.
 - **Local safety:** `AUTO_SYNC_INTERVAL_SECONDS=0` in the local `.env`.
+
+**Status after the push of `579932a`** (probed from outside on 2026-09-17):
+
+| Piece | State | Evidence |
+|---|---|---|
+| Vercel build | ❌ failed: `Missing VITE_API_URL for this build` | Vercel build log. Both Supabase vars passed the check, so only `VITE_API_URL` is absent from Vercel's Production env |
+| Site served at `drivetag-ai.com` | ❌ still the old `75abc96` build | `/login` → `X-Vercel-Error: NOT_FOUND`. The bundle contains `localhost:3001` and has no PKCE, so sign-in lands on `#access_token=` rather than `?code=` |
+| Supabase redirect allowlist | ❌ not updated | `/auth/v1/verify` with `redirect_to=https://drivetag-ai.com/dashboard` (and `www`) is sent to `http://localhost:5173/`. `localhost:5173/dashboard` is honored |
+| DigitalOcean code | ✅ `579932a` is live | A refused CORS preflight answers 204; the old code answered 401 |
+| DigitalOcean env | ❌ not updated | The preflight from `https://drivetag-ai.com` has no `Access-Control-Allow-Origin`. A bad-state OAuth callback redirects to `http://localhost:5173/connect` |
+| DNS | ⚠️ unchanged | `@` and `www` → `159.198.67.67` (APISIX, in front of Vercel); `www` serves a parking page. `api` → DigitalOcean ✅ |
 
 **Your steps, in order** ([domainguide.md](domainguide.md) has exact values and a check for each):
 1. **Vercel:** set `VITE_API_URL=https://api.drivetag-ai.com`, then commit and push these changes and redeploy with the build cache off (§2b).
