@@ -56,5 +56,10 @@ export async function getAuthedClient(userId) {
 export async function revokeAccess(userId) {
   const refreshToken = await getRefreshToken(userId);
   if (!refreshToken) return;
+  await revokeRefreshToken(refreshToken);
+}
+
+/** Revokes a grant DriveTag holds but never stored (e.g. a Drive connection nobody could claim). */
+export async function revokeRefreshToken(refreshToken) {
   await newOAuthClient().revokeToken(refreshToken);
 }

@@ -80,21 +80,36 @@ The screens exist as static UI. None of them read real data yet.
 - [ ] Settings actions wired: change folders, disconnect Drive (`DELETE /api/auth/google`), delete account
 - [ ] Empty/error states driven by real state rather than placeholders
 
+## Phase 3b — AI work processes
+
+- [x] Schema: `work_processes`, `process_destinations`, usage counters, `image_credit_grants` + SQL functions (`supabase/migrations/0002_work_processes.sql`), tested in PGlite
+- [x] Several processes per user: Raw → Master → AI-chosen destinations, "Unsorted" fallback, one Drive watch for all
+- [x] Per-process naming templates (`{destination}_{subject}_{date}`…, shared vectors in `tests/filename-vectors.json`), custom tag fields, AI instructions
+- [x] Dynamic Gemini schema per process (destination enum), output validation, loop guard between processes
+- [x] Folder browser with breadcrumbs, search and "New folder"; destinations created inside Master
+- [x] Process editor, onboarding for the first process, dashboard per-process cards with Organize now / Retry / on-off
+- [ ] Run `0002` on production, deploy backend then frontend, smoke-test with a real Drive (Handover.md)
+- [ ] Cleanup release: remove legacy `/api/drive/config` endpoints and `/api/me` fields, then run `0003_cleanup.sql`
+- [ ] "Re-sort already-sorted images" action
+- [ ] SVG/AVIF support (Gemini doesn't accept SVG inline; would need rasterizing in memory)
+
 ## Phase 4 — Payments (Lemon Squeezy or Paddle)
 
 **Decision needed before starting:** Lemon Squeezy vs Paddle.
 
 **Backend**
-- [x] Provider-agnostic subscription gate (`isEntitled`) checked before any Gemini spend, failing closed
-- [x] Trial row created on first Drive connect (`TRIAL_DAYS`) so onboarding works pre-billing
+- [x] Plans in one config file (`backend/src/config/plans.js`): Free (1 process, 100 lifetime images), Creator (5, 1,000/mo), Studio (15, 5,000/mo), Enterprise (50, 25,000/mo, monthly only)
+- [x] Usage metering charged atomically on success (`complete_processed_file`), top-up packs that never expire (`grant_image_credits`), plan gate failing closed before any Gemini spend
+- [x] Owner SQL helpers to set plans and grant credits by hand (ForDev.md §2b)
 - [ ] Checkout/customer API integration for the chosen provider
-- [ ] Webhook handler for subscription lifecycle events → update `subscriptions`
-- [ ] Handle trial expiry → `expired`, and dunning/`past_due`
+- [ ] Webhook handler: subscription lifecycle → `subscriptions.plan`/`status`/`period_anchor`; pack purchases → `grant_image_credits(..., 'purchase', provider_reference)`
+- [ ] Dunning / `past_due` resolution (treated as paid until then)
 
 **Frontend**
-- [ ] Pricing page
-- [ ] Checkout redirect
-- [ ] Billing portal link + subscription status in dashboard
+- [x] Pricing on the landing page and a `/plans` page (prices show "Coming soon")
+- [x] Usage meter and upgrade prompts on the dashboard and in the editor
+- [ ] Checkout redirect for plans and image packs
+- [ ] Billing portal link
 
 ## Phase 5 — Deployment & Launch
 
@@ -125,4 +140,5 @@ Recorded so they aren't relitigated by accident — details in ForDev.md §12.
 
 - [ ] Lemon Squeezy vs Paddle
 - [ ] Whether to pursue Google restricted-scope verification (public launch) or stay on a test-user allowlist (design partners only)
-- [ ] Pricing model — per seat, per folder, or per image processed
+- [x] Pricing model: tiers limit work processes and monthly images, plus one-time image packs (prices still to set in `backend/src/config/plans.js`)
+- [ ] Prices for Creator, Studio, Enterprise and the image packs

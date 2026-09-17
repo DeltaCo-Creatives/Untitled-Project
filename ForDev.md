@@ -180,15 +180,66 @@ create trigger set_updated_at
 
 **Verify:** open **Table Editor** — you should see `google_credentials`, `folder_configs`, `drive_channels`, `processed_files`, `subscriptions`, each showing RLS enabled.
 
+### 2b. Work processes, plans and usage (migration 0002)
+
+Then open a new query, paste the whole of [`supabase/migrations/0002_work_processes.sql`](supabase/migrations/0002_work_processes.sql), and click **Run**. It isn't copied here, so the file stays the only source. It's wrapped in a transaction and the schema parts are safe to re-run. The one-time data backfill at the bottom (migrating folder configs, counting past images) records itself in `schema_migrations` and never runs twice, so a re-run can't bring back processes users deleted or re-count images already charged.
+
+**On an existing database, run it *before* deploying the backend that needs it.** The previously deployed backend keeps working against it:
+- Old `trialing` inserts are still accepted.
+- A trigger mirrors old `folder_configs` writes into the user's first work process.
+
+A backend deployed without it logs `"Schema problem"` at boot.
+
+**Verify:**
+
+```sql
+select user_id, name, raw_folder_name, master_folder_name, rename_template from work_processes;
+select process_id, name, folder_name, is_fallback from process_destinations;
+select user_id, plan, status, free_images_used, period_images_used, topup_balance from subscriptions;
+```
+
+Every user who had a `folder_configs` row now has one process called "My first process":
+- Its Master folder and its Unsorted destination are the old Destination folder.
+- Its template is `{genre}_{subject}`, so file names don't change.
+- Trials became the Free plan, and images already organized count toward its 100.
+
+**`0003_cleanup.sql` comes later.** Run it only once the cleanup release is live, i.e. the backend that no longer serves `/api/drive/config`. It drops the trigger, `folder_configs`, the `trialing` status and `trial_ends_at`.
+
+### Managing plans and credits by hand (until payments exist)
+
+Run these in the SQL editor, which runs as the database owner. The helpers can't be called through the API at all.
+
+```sql
+-- Upgrade (a plan change starts a new monthly period)
+select public.admin_set_plan('client@example.com', 'creator');      -- creator | studio | enterprise | free
+-- Same plan, but restart the monthly allowance now
+select public.admin_set_plan('client@example.com', 'studio', 'active', true);
+-- Lapse a paid plan (Free limits apply until it's active again)
+select public.admin_set_plan('client@example.com', 'studio', 'cancelled');
+-- Sell an image pack (never expires; used after the plan's allowance)
+select public.admin_grant_credits('client@example.com', 1000, 'Pack 1000, invoice #12');
+-- Take credits back (fails, changing nothing, if the balance would go negative)
+select public.admin_grant_credits('client@example.com', -250, 'Refund, invoice #12');
+-- Where someone stands
+select * from public.image_usage((select id from auth.users where email = 'client@example.com'));
+select * from public.image_credit_grants where user_id = (select id from auth.users where email = 'client@example.com') order by created_at desc;
+```
+
+Plan limits (process count, free and monthly images, packs) live in `backend/src/config/plans.js`, not in the database. Change them there and redeploy.
+
 ### What each table is for
 
 | Table | Holds | Notes |
 |---|---|---|
 | `google_credentials` | Encrypted Google refresh token per user | No RLS policy at all — unreachable from the browser. Also encrypted at the app layer. |
-| `folder_configs` | The user's Raw + Destination folder IDs | One row per user. |
-| `drive_channels` | Active watch channel + changes-feed page token | One per user; `expires_at` drives renewal. |
-| `processed_files` | Filenames, tags, status per processed file | The `unique (user_id, file_id)` constraint is what makes redelivered webhooks safe. **No image bytes** — Zero-Retention holds. |
-| `subscriptions` | Billing status | Gates the AI pipeline. A trial row is created on first Drive connect. |
+| `folder_configs` | Legacy single Raw + Destination config | Mirrored into `work_processes` by a trigger; dropped by `0003_cleanup.sql`. |
+| `work_processes` | A user's AI work processes: Raw + Master folder, naming template, tag fields, instructions, time zone, on/off | Many per user; one per Raw folder. Plan limits mark the newest ones `locked` in code, not in the table. |
+| `process_destinations` | Each process's destination folders, with the descriptions the AI chooses by | Exactly one `is_fallback` (Unsorted) per process. `user_id` is tied to the process by a composite foreign key. |
+| `drive_channels` | Active watch channel + changes-feed page token | One per user, covering every process; `expires_at` drives renewal. |
+| `processed_files` | Filenames, tags, destination, credit bucket, status per processed file | The `unique (user_id, file_id)` constraint is what makes redelivered webhooks safe. **No image bytes** — Zero-Retention holds. |
+| `subscriptions` | Plan, status, and image usage counters (free used, this period used, top-up balance) | A Free row is created on first Drive connect; no row means no processing. Changed only through the SQL functions. |
+| `image_credit_grants` | Audit log of every top-up credit change | `provider_reference` is unique so a future payment webhook can't grant twice. |
+| `schema_migrations` | Which one-time data backfills have run | Bookkeeping only; RLS on with no policies. |
 
 ---
 
@@ -366,6 +417,26 @@ cd backend && npm run test:gemini
 
 It prints the tags and the filename the pipeline would rename to. Drop a real photo at `backend/test-assets/sample.jpg` first for a meaningful result, or pass a path: `npm run test:gemini /path/to/photo.jpg`.
 
+To try a work process's routing, pass a spec (the API's camelCase process shape) with `--process`. For example:
+
+```json
+{
+  "name": "Brand assets",
+  "renameTemplate": "{destination}_{subject}_{tag:client}",
+  "instructions": "Anything showing the Acme wordmark is a Logo, even on a banner.",
+  "tagFields": [{ "key": "client", "label": "Client", "description": "Brand or company shown, if any" }],
+  "destinations": [
+    { "name": "Logos", "description": "brand marks, wordmarks, app icons" },
+    { "name": "Graphics", "description": "banners, social posts, illustrations" },
+    { "name": "Unsorted", "isFallback": true }
+  ]
+}
+```
+
+```bash
+npm run test:gemini /path/to/photo.jpg --process spec.json
+```
+
 The full loop needs an authenticated user. Create a test user under **Authentication → Users** in Supabase (set a password), then mint a token:
 
 ```bash
@@ -384,13 +455,13 @@ curl -s -X POST http://localhost:3001/api/auth/google/start -H "Authorization: B
 ```
 
 ```bash
-# 2. List your Drive folders and pick two IDs
+# 2. List your Drive folders (My Drive root; add ?parentId=ID to open one, ?q=name to search) and pick two IDs
 curl -s http://localhost:3001/api/drive/folders -H "Authorization: Bearer $TOKEN"
 ```
 
 ```bash
-# 3. Save the Raw + Destination folders
-curl -s -X POST http://localhost:3001/api/drive/config -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"rawFolderId":"RAW_ID","destinationFolderId":"DEST_ID"}'
+# 3. Create a work process: Raw → Master, with a Logos destination DriveTag creates inside Master
+curl -s -X POST http://localhost:3001/api/processes -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"name":"Test","rawFolderId":"RAW_ID","masterFolderId":"MASTER_ID","renameTemplate":"{destination}_{subject}","timezone":"UTC","tagFields":[],"destinations":[{"name":"Logos","description":"brand marks and wordmarks","folder":{"mode":"create"}},{"name":"Unsorted","isFallback":true,"folder":{"mode":"create"}}]}'
 ```
 
 ```bash
@@ -403,7 +474,7 @@ curl -s -X POST http://localhost:3001/api/drive/watch -H "Authorization: Bearer 
 curl -s http://localhost:3001/api/activity -H "Authorization: Bearer $TOKEN"
 ```
 
-Within a few seconds the file should be renamed `genre_subject.ext` and moved to the Destination folder.
+Within a few seconds the file should be renamed with the process's template (here `logos_<subject>.ext` or `unsorted_<subject>.ext`) and moved into the destination the AI chose. `GET /api/me` shows `usage.freeUsed` going up by one per sorted image.
 
 ---
 
@@ -472,11 +543,15 @@ Set this up before you have real users — it is the most likely cause of "it ju
 Things that were open questions and are now settled in code — change them deliberately, not by accident.
 
 - **Drive authorization is a separate grant from login.** Supabase handles identity (Google login); the backend runs its own Drive OAuth flow to get an *offline* refresh token, because the pipeline runs when the user isn't present. Both can live in the same Google Cloud project.
-- **We watch the changes feed, not the folder.** Drive's per-file watch on a folder doesn't reliably fire for files added inside it, so the backend watches the user's changes feed and filters to the Raw folder. That's why `drive_channels.page_token` exists.
-- **A trial row is created on first Drive connect** (`TRIAL_DAYS`, default 14), so onboarding works before billing exists. The pipeline gate fails closed: no active subscription or trial means no processing and no Gemini spend.
+- **We watch the changes feed, not the folder.** Drive's per-file watch on a folder doesn't reliably fire for files added inside it, so the backend watches the user's changes feed and matches each file to the work process whose Raw folder holds it. That's why `drive_channels.page_token` exists, and why one watch serves every process.
+- **A Free plan row is created on first Drive connect:** 1 process, 100 images, no time limit. The pipeline gate fails closed: no subscription row means no processing and no Gemini spend.
+  - Paid plans (Creator, Studio, Enterprise) raise the process limit and add a monthly image allowance. Top-up packs extend any plan and never expire.
+  - Each image is charged once, only when it's sorted successfully, in the same transaction that records it.
 - **Activity history is kept, metadata only.** It's needed for idempotency anyway; it stores filenames and tags, never pixels.
-- **Duplicate filenames are allowed.** Two similar images can both become `portrait_woman-smiling.jpg`; Drive keeps them distinct by ID. Add a collision suffix later if it bothers users.
-- **Not handled yet:** Shared Drives (My Drive only, via `restrictToMyDrive`), and the payment provider webhook — that waits on the Lemon Squeezy vs Paddle decision. The subscription gate itself is provider-agnostic and already in place.
+- **Duplicate filenames are allowed.** Two similar images can both become `logos_acme-wordmark.png`; Drive keeps them distinct by ID. A `{date}` or `{original}` token in the template makes names more unique if it bothers users.
+- **Not handled yet:**
+  - Shared Drives: My Drive only, via `restrictToMyDrive`, and shared-drive folders are rejected when saving a process.
+  - Checkout and the payment provider webhook, which wait on the Lemon Squeezy vs Paddle decision. The webhook should call `grant_image_credits(..., 'purchase', provider_reference)` for packs and set `subscriptions.plan`/`status` for subscriptions. Until then, use the SQL helpers in §2b.
 
 ---
 
@@ -531,6 +606,6 @@ Ordered by dependency — each step unblocks the next. Nothing here needs code w
 21. [ ] Production redirect URI + webhook URL; re-register every watch channel after the domain changes
 22. [ ] Schedule `npm run renew:channels` hourly (§9) — without this, tagging silently dies within days
 23. [ ] Privacy policy + terms on your domain
-24. [ ] Pick Lemon Squeezy or Paddle, then build the billing webhook
+24. [ ] Pick Lemon Squeezy or Paddle, then build checkout and the billing webhook (plans, limits, usage metering and the credit ledger already exist, see §2b)
 
 **Costs to expect:** domain ~$10–15/yr · ngrok paid ~$8/mo (or Cloudflare Tunnel free) · Supabase free tier fine to start · DigitalOcean App Platform ~$5/mo · Gemini Flash pay-per-use (the free tier's rate limits will throttle a real workload, so plan on enabling billing).

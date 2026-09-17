@@ -6,25 +6,39 @@ import { getAuthedClient } from "./googleAuth.service.js";
 const REQUEST_TIMEOUT_MS = 60_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 
+const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
+const MAX_PATH_DEPTH = 20;
+
 async function driveFor(userId) {
   return google.drive({ version: "v3", auth: await getAuthedClient(userId) });
 }
 
-export async function listFolders(userId, query) {
+/** Escapes a value for a Drive query string literal: backslashes first, then quotes. */
+export function escapeQueryValue(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+/**
+ * One page of folders for the folder browser: the children of parentId
+ * ("root" is My Drive), or a name search across every folder the user can see.
+ */
+export async function listFolders(userId, { q, parentId = "root", pageToken } = {}) {
   const drive = await driveFor(userId);
-  const clauses = ["mimeType = 'application/vnd.google-apps.folder'", "trashed = false"];
-  if (query) clauses.push(`name contains '${query.replace(/'/g, "\\'")}'`);
+  const clauses = [`mimeType = '${FOLDER_MIME_TYPE}'`, "trashed = false"];
+  if (q) clauses.push(`name contains '${escapeQueryValue(q)}'`);
+  else clauses.push(`'${escapeQueryValue(parentId || "root")}' in parents`);
 
   const { data } = await drive.files.list(
     {
       q: clauses.join(" and "),
-      fields: "files(id, name)",
+      fields: "nextPageToken, files(id, name, parents, driveId)",
       pageSize: 100,
       orderBy: "name",
+      pageToken: pageToken || undefined,
     },
     { timeout: REQUEST_TIMEOUT_MS },
   );
-  return data.files ?? [];
+  return { folders: data.files ?? [], nextPageToken: data.nextPageToken ?? null };
 }
 
 const MAX_FOLDER_SCAN = 500;
@@ -33,7 +47,7 @@ const MAX_FOLDER_SCAN = 500;
 export async function listImagesInFolder(userId, folderId, mimeTypes) {
   const drive = await driveFor(userId);
   const mimeClause = mimeTypes.map((type) => `mimeType = '${type}'`).join(" or ");
-  const q = `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false and (${mimeClause})`;
+  const q = `'${escapeQueryValue(folderId)}' in parents and trashed = false and (${mimeClause})`;
 
   const files = [];
   let pageToken;
@@ -41,7 +55,7 @@ export async function listImagesInFolder(userId, folderId, mimeTypes) {
     const { data } = await drive.files.list(
       {
         q,
-        fields: "nextPageToken, files(id, name, mimeType, size, parents, trashed)",
+        fields: "nextPageToken, files(id, name, mimeType, size, parents, trashed, createdTime, imageMediaMetadata(time), capabilities(canRename))",
         pageSize: 100,
         orderBy: "createdTime",
         pageToken,
@@ -60,11 +74,70 @@ export async function getFolder(userId, folderId) {
   const { data } = await drive.files.get(
     {
       fileId: folderId,
-      fields: "id, name, mimeType, trashed",
+      fields: "id, name, mimeType, trashed, parents, driveId, capabilities(canAddChildren, canRemoveChildren)",
     },
     { timeout: REQUEST_TIMEOUT_MS },
   );
   return data;
+}
+
+export async function createFolder(userId, name, parentId) {
+  const drive = await driveFor(userId);
+  const { data } = await drive.files.create(
+    {
+      requestBody: { name, mimeType: FOLDER_MIME_TYPE, parents: [parentId] },
+      fields: "id, name, parents",
+    },
+    { timeout: REQUEST_TIMEOUT_MS },
+  );
+  return data;
+}
+
+async function findChildFolder(drive, parentId, name) {
+  const { data } = await drive.files.list(
+    {
+      q: `'${escapeQueryValue(parentId)}' in parents and name = '${escapeQueryValue(name)}' and mimeType = '${FOLDER_MIME_TYPE}' and trashed = false`,
+      fields: "files(id, name, parents)",
+      pageSize: 1,
+    },
+    { timeout: REQUEST_TIMEOUT_MS },
+  );
+  return data.files?.[0] ?? null;
+}
+
+/** The folder called `name` directly inside parentId, created if it doesn't exist yet. */
+export async function ensureChildFolder(userId, parentId, name) {
+  const drive = await driveFor(userId);
+  const existing = await findChildFolder(drive, parentId, name);
+  if (existing) return { ...existing, created: false };
+  return { ...(await createFolder(userId, name, parentId)), created: true };
+}
+
+/**
+ * Breadcrumbs from My Drive down to a folder. inMyDrive is false for folders
+ * that are only shared with the user, which the changes feed doesn't cover.
+ */
+export async function getFolderPath(userId, folderId) {
+  const drive = await driveFor(userId);
+  const get = async (fileId) =>
+    (await drive.files.get({ fileId, fields: "id, name, parents" }, { timeout: REQUEST_TIMEOUT_MS })).data;
+
+  const root = await get("root");
+  const path = [];
+  let current = await get(folderId);
+
+  for (let depth = 0; current && depth < MAX_PATH_DEPTH; depth += 1) {
+    const isRoot = current.id === root.id;
+    path.unshift({ id: current.id, name: isRoot ? "My Drive" : current.name });
+    if (isRoot || !current.parents?.length) break;
+    try {
+      current = await get(current.parents[0]);
+    } catch {
+      break; // a parent the user can't see (shared folder)
+    }
+  }
+
+  return { path, inMyDrive: path[0]?.id === root.id };
 }
 
 /**
@@ -116,7 +189,7 @@ export async function listChanges(userId, pageToken) {
       spaces: "drive",
       restrictToMyDrive: true,
       fields:
-        "newStartPageToken, nextPageToken, changes(fileId, removed, file(id, name, mimeType, size, parents, trashed))",
+        "newStartPageToken, nextPageToken, changes(fileId, removed, file(id, name, mimeType, size, parents, trashed, createdTime, imageMediaMetadata(time), capabilities(canRename)))",
     },
     { timeout: REQUEST_TIMEOUT_MS },
   );

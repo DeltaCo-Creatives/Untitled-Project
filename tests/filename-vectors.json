@@ -1,0 +1,170 @@
+{
+  "_comment": "Shared by backend/src/utils/filename.js and frontend/src/lib/filename.ts. Both must produce exactly these results.",
+  "render": [
+    {
+      "name": "legacy template keeps today's names",
+      "template": "{genre}_{subject}",
+      "values": { "genre": "portrait", "subject": "woman-smiling" },
+      "originalName": "IMG_0042.JPG",
+      "mimeType": "image/jpeg",
+      "expected": "portrait_woman-smiling.jpg"
+    },
+    {
+      "name": "destination, subject and date",
+      "template": "{destination}_{subject}_{date}",
+      "values": { "destination": "Line art", "subject": "Acme wordmark", "date": "2026-09-17" },
+      "originalName": "logo final.png",
+      "mimeType": "image/png",
+      "expected": "line-art_acme-wordmark_2026-09-17.png"
+    },
+    {
+      "name": "an empty token takes its separator with it",
+      "template": "{destination}_{style}_{subject}",
+      "values": { "destination": "Logos", "style": "", "subject": "coffee cup" },
+      "originalName": "",
+      "mimeType": "image/webp",
+      "expected": "logos_coffee-cup.webp"
+    },
+    {
+      "name": "two leading empty tokens",
+      "template": "{style}_{genre}_{subject}",
+      "values": { "style": "", "genre": "", "subject": "red car" },
+      "originalName": "a.jpg",
+      "mimeType": "image/jpeg",
+      "expected": "red-car.jpg"
+    },
+    {
+      "name": "accents are folded",
+      "template": "{subject}",
+      "values": { "subject": "Über Café" },
+      "originalName": "x.heic",
+      "mimeType": "image/heic",
+      "expected": "uber-cafe.heic"
+    },
+    {
+      "name": "everything empty falls back to image",
+      "template": "{style}-{genre}",
+      "values": { "style": "", "genre": "", "subject": "  " },
+      "originalName": "noext",
+      "mimeType": "image/png",
+      "expected": "image.png"
+    },
+    {
+      "name": "empty template result falls back to subject",
+      "template": "{style}",
+      "values": { "style": "", "subject": "red car" },
+      "originalName": "a.gif",
+      "mimeType": "image/gif",
+      "expected": "red-car.gif"
+    },
+    {
+      "name": "custom tag field and literal parentheses",
+      "template": "{tag:client}_{subject} ({date})",
+      "values": { "subject": "banner", "date": "2026-01-02", "tags": { "client": "Acme Co." } },
+      "originalName": "b.jpeg",
+      "mimeType": "image/jpeg",
+      "expected": "acme-co_banner (2026-01-02).jpeg"
+    },
+    {
+      "name": "missing custom tag value",
+      "template": "{tag:client}_{subject}",
+      "values": { "subject": "banner", "tags": {} },
+      "originalName": "b.jpg",
+      "mimeType": "image/jpeg",
+      "expected": "banner.jpg"
+    },
+    {
+      "name": "original drops its extension",
+      "template": "{original}-{destination}",
+      "values": { "original": "Client Upload 01.PNG", "destination": "Graphics" },
+      "originalName": "Client Upload 01.PNG",
+      "mimeType": "image/png",
+      "expected": "client-upload-01-graphics.png"
+    },
+    {
+      "name": "a deliberate spaced dash is kept",
+      "template": "{destination} - {subject}",
+      "values": { "destination": "Logos", "subject": "cat" },
+      "originalName": "c.jpg",
+      "mimeType": "image/jpeg",
+      "expected": "logos - cat.jpg"
+    },
+    {
+      "name": "a spaced dash disappears with its empty token",
+      "template": "{destination} - {subject}",
+      "values": { "destination": "", "subject": "cat" },
+      "originalName": "c.jpg",
+      "mimeType": "image/jpeg",
+      "expected": "cat.jpg"
+    },
+    {
+      "name": "stray characters in an unvalidated template are replaced",
+      "template": "{subject}/{style}",
+      "values": { "subject": "cat", "style": "photo" },
+      "originalName": "",
+      "mimeType": "image/tiff",
+      "expected": "cat-photo.tif"
+    },
+    {
+      "name": "150 character cap",
+      "template": "{subject}_{style}_{genre}",
+      "values": {
+        "subject": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "style": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "genre": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "originalName": "x.jpg",
+      "mimeType": "image/jpeg",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_cccccccccccccccccccccccccccc.jpg"
+    },
+    {
+      "name": "cap landing on a separator trims it",
+      "template": "{subject}{style}{genre}_{process}",
+      "values": {
+        "subject": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "style": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "genre": "ccccccccccccccccccccccccccccc",
+        "process": "zzz"
+      },
+      "originalName": "q.png",
+      "mimeType": "image/png",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccc.png"
+    },
+    {
+      "name": "slug cut at 60 doesn't end in a hyphen",
+      "template": "{subject}",
+      "values": { "subject": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b" },
+      "originalName": "x.jpg",
+      "mimeType": "image/jpeg",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg"
+    },
+    {
+      "name": "junk extension falls back to the MIME type",
+      "template": "{subject}",
+      "values": { "subject": "dog" },
+      "originalName": "photo.jpg?raw=1",
+      "mimeType": "image/jpeg",
+      "expected": "dog.jpg"
+    },
+    {
+      "name": "a leading dot is not an extension",
+      "template": "{subject}",
+      "values": { "subject": "dog" },
+      "originalName": ".hidden",
+      "mimeType": "image/png",
+      "expected": "dog.png"
+    }
+  ],
+  "validate": [
+    { "template": "{destination}_{subject}", "tagKeys": [], "valid": true },
+    { "template": "{subject}_{tag:client}", "tagKeys": ["client"], "valid": true },
+    { "template": "{ subject }", "tagKeys": [], "valid": true },
+    { "template": "{subject}_{tag:client}", "tagKeys": [], "valid": false },
+    { "template": "{subjct}", "tagKeys": [], "valid": false },
+    { "template": "no tokens here", "tagKeys": [], "valid": false },
+    { "template": "{subject", "tagKeys": [], "valid": false },
+    { "template": "subject}", "tagKeys": [], "valid": false },
+    { "template": "{subject}/{style}", "tagKeys": [], "valid": false },
+    { "template": "", "tagKeys": [], "valid": false }
+  ]
+}

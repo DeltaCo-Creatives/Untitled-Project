@@ -1,0 +1,119 @@
+import { useId } from 'react';
+import { ArrowRight, BadgeCheck, Building, Check, Clock3, Palette, Sparkles, Sprout, Users, type LucideIcon } from 'lucide-react';
+import type { BillingInterval, PlanId, PlanInfo } from '../../lib/api';
+import { Button, ButtonLink } from '../ui/Button';
+import { PAYMENTS_PENDING_NOTE, billingNote, isFreePlan, planFeatures, priceText } from './planFeatures';
+
+const ACCENTS: Record<PlanId, { icon: LucideIcon; bubble: string; check: string }> = {
+  free: { icon: Sprout, bubble: 'bg-sage', check: 'bg-sage' },
+  creator: { icon: Palette, bubble: 'bg-periwinkle', check: 'bg-periwinkle-soft' },
+  studio: { icon: Users, bubble: 'bg-lavender', check: 'bg-lavender-soft' },
+  enterprise: { icon: Building, bubble: 'bg-butter', check: 'bg-butter-soft' },
+};
+
+interface PlanCardProps {
+  plan: PlanInfo;
+  interval: BillingInterval;
+  current?: boolean;
+  /** Wears the "Most popular" ribbon. */
+  featured?: boolean;
+  signedIn?: boolean;
+  compact?: boolean;
+}
+
+export function PlanCard({
+  plan,
+  interval,
+  current = false,
+  featured = false,
+  signedIn = false,
+  compact = false,
+}: PlanCardProps) {
+  const titleId = useId();
+  const accent = ACCENTS[plan.id] ?? ACCENTS.creator;
+  const Icon = accent.icon;
+  const free = isFreePlan(plan);
+  const note = billingNote(plan, interval);
+  const features = planFeatures(plan, { compact });
+  const priced = Boolean(plan.priceLabel) || free;
+
+  return (
+    <article
+      aria-labelledby={titleId}
+      className={`relative flex h-full flex-col rounded-[2rem] border bg-white shadow-soft transition-shadow duration-300 hover:shadow-lift ${
+        compact ? 'p-6' : 'p-6 sm:p-7'
+      } ${featured ? 'border-lavender' : 'border-line'} ${current ? 'ring-4 ring-sage/70' : ''}`}
+    >
+      {featured && (
+        <span className="plan-ribbon absolute inset-x-0 -top-3.5 mx-auto inline-flex w-fit items-center gap-1 rounded-full bg-gradient-to-r from-lavender to-periwinkle px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-ink shadow-soft">
+          <Sparkles className="h-3.5 w-3.5" aria-hidden />
+          Most popular
+        </span>
+      )}
+
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <span className={`plan-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${accent.bubble} shadow-soft`}>
+          <Icon className="h-6 w-6 text-ink" aria-hidden />
+        </span>
+        {current && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2.5 py-1 text-xs font-extrabold text-sage-deep">
+            <BadgeCheck className="h-3.5 w-3.5" aria-hidden />
+            Your plan
+          </span>
+        )}
+      </div>
+
+      <h3 id={titleId} className="text-2xl font-semibold tracking-tight">
+        {plan.label}
+      </h3>
+      <p className="mt-1 text-sm leading-relaxed text-ink-soft">{plan.tagline}</p>
+
+      <div className={`border-b border-dashed border-line ${compact ? 'my-4 pb-4' : 'my-5 pb-5'}`}>
+        <p className={`font-display font-bold tracking-tight ${priced ? 'text-4xl' : 'text-3xl'} ${priced ? 'text-ink' : 'text-lavender-deep'}`}>
+          {priceText(plan)}
+        </p>
+        <p
+          className={`plan-billing mt-1.5 inline-flex rounded-full text-xs font-bold ${
+            note.emphasis ? 'bg-butter px-2.5 py-0.5 text-ink' : 'text-ink-soft'
+          }`}
+        >
+          {note.text}
+        </p>
+      </div>
+
+      <ul className={`space-y-2.5 ${compact ? 'mb-5' : 'mb-7'}`}>
+        {features.map((feature) => (
+          <li key={feature} className="flex gap-2.5 text-sm font-semibold leading-snug">
+            <span className={`plan-check mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${accent.check}`}>
+              <Check className="h-3 w-3 text-ink" strokeWidth={3} aria-hidden />
+            </span>
+            {feature}
+          </li>
+        ))}
+      </ul>
+
+      <div className="mt-auto">
+        {free ? (
+          <ButtonLink to={signedIn ? '/dashboard' : '/login'} className="w-full">
+            {signedIn ? 'Go to dashboard' : 'Get started free'}
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </ButtonLink>
+        ) : (
+          // The wrapper carries the tooltip too: some browsers skip titles on disabled buttons.
+          <span className="block" title={PAYMENTS_PENDING_NOTE}>
+            <Button
+              disabled
+              variant={featured ? 'primary' : 'secondary'}
+              className="w-full"
+              title={PAYMENTS_PENDING_NOTE}
+              aria-label={`${current ? 'Manage' : 'Choose'} ${plan.label}: coming soon`}
+            >
+              <Clock3 className="h-4 w-4" aria-hidden />
+              Coming soon
+            </Button>
+          </span>
+        )}
+      </div>
+    </article>
+  );
+}

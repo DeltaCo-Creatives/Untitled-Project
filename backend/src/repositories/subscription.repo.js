@@ -1,7 +1,4 @@
 import { supabase } from "../lib/supabase.js";
-import { env } from "../config/env.js";
-
-const ACTIVE_STATUSES = new Set(["active", "trialing"]);
 
 export async function getSubscription(userId) {
   const { data, error } = await supabase
@@ -14,31 +11,15 @@ export async function getSubscription(userId) {
   return data;
 }
 
-/** Called on first Drive connect so onboarding works before billing exists. */
-export async function startTrialIfNew(userId) {
-  const existing = await getSubscription(userId);
-  if (existing) return existing;
-
-  const trialEnds = new Date(Date.now() + env.trialDays * 24 * 60 * 60 * 1000);
-  const { data, error } = await supabase
-    .from("subscriptions")
-    .insert({ user_id: userId, status: "trialing", trial_ends_at: trialEnds.toISOString() })
-    .select()
-    .single();
-
-  if (error) throw new Error(`Failed to start trial: ${error.message}`);
-  return data;
-}
-
 /**
- * Gate for the AI pipeline — checked before any Gemini spend. Fails closed:
- * no subscription row means no processing.
+ * Called on first Drive connect. A missing row means no processing at all (the
+ * pipeline fails closed), so every connected user gets the Free plan row; the
+ * table defaults supply plan 'free' and status 'active'.
  */
-export function isEntitled(subscription) {
-  if (!subscription || !ACTIVE_STATUSES.has(subscription.status)) return false;
+export async function ensureSubscription(userId) {
+  const { error } = await supabase
+    .from("subscriptions")
+    .upsert({ user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true });
 
-  if (subscription.status === "trialing") {
-    return !subscription.trial_ends_at || new Date(subscription.trial_ends_at) > new Date();
-  }
-  return true;
+  if (error) throw new Error(`Failed to create subscription: ${error.message}`);
 }

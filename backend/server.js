@@ -13,6 +13,12 @@ for (const problem of productionConfigProblems()) {
 const { createApp } = await import("./src/app.js");
 const { startAutoSync } = await import("./src/services/autoSync.service.js");
 const { startChannelRenewal, convertPollingChannels } = await import("./src/services/driveWatch.service.js");
+const { schemaProblem } = await import("./src/repositories/usage.repo.js");
+
+// A backend deployed before migration 0002 was run fails on every plan lookup; say why up front.
+schemaProblem()
+  .then((problem) => problem && logger.error("Schema problem", { problem }))
+  .catch((err) => logger.error("Schema check failed", { reason: err.message }));
 
 createApp().listen(env.port, () => {
   logger.info("DriveTag AI backend started", { port: env.port, nodeEnv: env.nodeEnv });

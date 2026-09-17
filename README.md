@@ -1,6 +1,12 @@
 # DriveTag AI
 
-Automated visual-asset tagging for creative agencies and freelancers. DriveTag watches a Google Drive "Raw" folder, classifies each new image with Gemini Flash, then renames it (`genre_subject.jpg`) and moves it into a destination folder.
+Automated visual-asset sorting for creative agencies and freelancers.
+
+- **Work processes:** you set up AI work processes in Google Drive. Each watches a "Raw" folder and sorts new images into a Master folder's destination folders.
+- **Routing:** you describe each destination, e.g. Logos: "brand marks, wordmarks, app icons". Gemini Flash picks the best fit for every image, and anything that fits none goes to Unsorted.
+- **Naming and tags:** each image is renamed with your template (e.g. `logos_acme-wordmark_2026-09-17.png`) and tagged with your own fields.
+
+Plans limit how many processes you can run and how many images are sorted: Free gives 100 images with no time limit.
 
 **Zero-Retention:** images are processed in memory only — never written to disk, a database, or a storage bucket.
 
@@ -8,12 +14,12 @@ Automated visual-asset tagging for creative agencies and freelancers. DriveTag w
 
 | Area | State |
 |---|---|
-| Backend | Built — Drive OAuth, folder config, watch channels, Gemini pipeline, rename/move. Not yet run end to end against a real Drive |
-| Frontend | UI shell — mocked login, no calls to the backend yet |
+| Backend | Built — Drive OAuth, work processes, watch channels, per-process Gemini routing, rename/move, plans and usage metering |
+| Frontend | Built — Supabase login, onboarding, process editor with folder browser, dashboard, plans page |
 | Accounts | Supabase, Google OAuth and Gemini set up in one environment; `.env` files must be copied to each machine |
 | Domain | `drivetag-ai.com` purchased, not yet wired |
 | Deployment | Not confirmed |
-| Payments | Provider not chosen |
+| Payments | Plans, limits and credits built; checkout provider not chosen (plans set by hand, see ForDev.md §2b) |
 
 **For the full current state and what to do next, read [Handover.md](Handover.md).**
 

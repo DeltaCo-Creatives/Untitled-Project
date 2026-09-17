@@ -16,6 +16,8 @@ function redactSensitiveUrl(event: BeforeSendEvent): BeforeSendEvent {
 // redirects (including login -> dashboard) would go uncounted without explicit routes.
 export function RouteAnalytics() {
   const { pathname } = useLocation();
-  // `route` is meant to be the route pattern; pathname is only equivalent while no route has :params.
-  return <Analytics route={pathname} path={pathname} beforeSend={redactSensitiveUrl} />;
+  // `route` is the route pattern, so every process editor counts as one page. Keep this in sync with
+  // the :param routes in App.tsx.
+  const route = /^\/processes\/(?!new$)[^/]+$/.test(pathname) ? '/processes/[id]' : pathname;
+  return <Analytics route={route} path={pathname} beforeSend={redactSensitiveUrl} />;
 }

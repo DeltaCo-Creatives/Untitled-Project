@@ -1,9 +1,10 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
   Check,
   FolderCheck,
+  Gift,
   HardDrive,
   ShieldCheck,
   Sparkles,
@@ -12,32 +13,38 @@ import {
   Zap,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { formatCount } from '../lib/format';
 import { gsap, useGSAP, ScrollTrigger, SplitText, MOTION_OK } from '../lib/gsap';
 import { useReveal } from '../hooks/useReveal';
+import { usePlans } from '../hooks/usePlans';
 import { Logo } from '../components/ui/Logo';
 import { ButtonLink } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { Skeleton } from '../components/ui/Skeleton';
 import { TagFlowIllustration } from '../components/TagFlowIllustration';
 import { MemoryDemo } from '../components/MemoryDemo';
+import { PlanGrid } from '../components/billing/PlanGrid';
+import { freeImageAllowance } from '../components/billing/planFeatures';
 
 const STEPS = [
   {
     icon: UploadCloud,
     bubble: 'bg-lavender',
     title: 'Drop it in',
-    description: 'Drag images into your Raw folder in Google Drive, from any device. No app to install, no upload screen.',
+    description: 'Drag images into a Raw folder in Google Drive, from any device. No app to install, no upload screen.',
   },
   {
     icon: Sparkles,
     bubble: 'bg-butter',
     title: 'Gemini tags it',
-    description: 'The moment a file lands, Gemini Flash reads its genre, subject, and style — in memory, in seconds.',
+    description:
+      'The moment a file lands, Gemini Flash reads it in memory, fills in your tags, and picks the destination that matches your descriptions — in seconds.',
   },
   {
     icon: FolderCheck,
     bubble: 'bg-sage',
     title: 'Auto-organized',
-    description: 'It’s renamed to something you can search and moved into your Destination folder. You never touch it.',
+    description: 'It’s renamed with your naming template and moved into the destination folder the AI picked. You never touch it.',
   },
 ];
 
@@ -64,7 +71,7 @@ const FEATURES = [
     icon: Users,
     bubble: 'bg-sage-soft',
     title: 'Built for agencies & freelancers',
-    description: 'Made for the daily flood of shoots, drafts, and deliverables that pile up in one shared folder.',
+    description: 'Run a work process per client or project for the daily flood of shoots, drafts, and deliverables that pile up in shared folders.',
   },
 ];
 
@@ -82,8 +89,17 @@ export default function Landing() {
   const pageRef = useRef<HTMLDivElement>(null);
   const ctaHref = user ? '/dashboard' : '/login';
   const ctaLabel = user ? 'Go to dashboard' : 'Get started free';
+  const { plans, error: plansError } = usePlans();
+  const freeImages = formatCount(freeImageAllowance(plans));
+  // Pricing hides itself if plans can't load; the rest of the page doesn't depend on it.
+  const pricingState = plansError ? 'hidden' : plans ? 'ready' : 'loading';
 
   useReveal(pageRef);
+
+  // The pricing section fills in (or disappears) after scroll triggers below it were measured.
+  useEffect(() => {
+    ScrollTrigger.refresh();
+  }, [pricingState]);
 
   useGSAP(
     () => {
@@ -113,6 +129,7 @@ export default function Landing() {
           .from('.squiggle path', { drawSVG: 0, duration: 0.8, ease: 'power2.inOut' }, '-=0.3')
           .from('.hero-sub', { y: 24, autoAlpha: 0, duration: 0.6, ease: 'power3.out' }, '<')
           .from('.hero-cta > *', { y: 20, autoAlpha: 0, stagger: 0.1, duration: 0.6 }, '<0.15')
+          .from('.hero-note', { y: 14, scale: 0.9, autoAlpha: 0, duration: 0.55 }, '<0.2')
           .from('.hero-trust > *', { y: 12, autoAlpha: 0, stagger: 0.08, duration: 0.5 }, '<0.2')
           .from('.hero-art', { x: 40, autoAlpha: 0, duration: 1, ease: 'power3.out' }, 0.3);
 
@@ -176,7 +193,7 @@ export default function Landing() {
         className="site-nav sticky top-0 z-40 border-b border-transparent transition-[background-color,box-shadow,border-color] duration-300 data-[scrolled=true]:border-line data-[scrolled=true]:bg-white/75 data-[scrolled=true]:shadow-soft data-[scrolled=true]:backdrop-blur-md"
         data-scrolled="false"
       >
-        <nav className="mx-auto flex h-18 max-w-6xl items-center justify-between px-4 py-3">
+        <nav aria-label="Main" className="mx-auto flex h-18 max-w-6xl items-center justify-between px-4 py-3">
           <div className="nav-item">
             <Logo />
           </div>
@@ -186,6 +203,13 @@ export default function Landing() {
             </a>
             <a href="#privacy" className="nav-item hidden rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink sm:inline-block">
               Privacy
+            </a>
+            {/* One element either way, so the entrance animation keeps its target when plans fail to load. */}
+            <a
+              href={pricingState === 'hidden' ? '/plans' : '#pricing'}
+              className="nav-item hidden rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink sm:inline-block"
+            >
+              Pricing
             </a>
             {!user && (
               <div className="nav-item">
@@ -232,8 +256,9 @@ export default function Landing() {
             </h1>
 
             <p className="hero-sub mx-auto mb-9 max-w-xl text-lg leading-relaxed text-ink-soft lg:mx-0">
-              DriveTag AI watches one folder in your Google Drive, tags every image the moment it arrives, and files it
-              away with a name you can actually search — so nobody sorts client assets by hand again.
+              DriveTag AI watches one Raw folder in your Google Drive, or many, each with its own AI work process. It tags
+              every image the moment it arrives, sorts it into destination folders you describe in plain words, and names
+              it your way with your own tags — so nobody sorts client assets by hand again.
             </p>
 
             <div className="hero-cta flex flex-col items-center justify-center gap-3 sm:flex-row lg:justify-start">
@@ -245,6 +270,11 @@ export default function Landing() {
                 See how it works
               </ButtonLink>
             </div>
+
+            <p className="hero-note mt-6 inline-flex items-center gap-2 rounded-2xl bg-butter-soft px-4 py-2 text-left text-sm font-bold text-ink sm:rounded-full">
+              <Gift className="h-4 w-4 shrink-0" aria-hidden />
+              Free for your first {freeImages} images — no credit card, no time limit
+            </p>
 
             <ul className="hero-trust mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm font-semibold text-ink-soft lg:justify-start">
               <li className="inline-flex items-center gap-1.5">
@@ -353,6 +383,40 @@ export default function Landing() {
           </div>
         </section>
 
+        {/* Pricing */}
+        {pricingState !== 'hidden' && (
+          <section id="pricing" aria-labelledby="pricing-heading" className="mx-auto max-w-6xl scroll-mt-24 px-4 py-20">
+            <p data-reveal className="mb-3 text-center text-sm font-extrabold uppercase tracking-widest text-lavender-deep">
+              Pricing
+            </p>
+            <h2 data-reveal id="pricing-heading" className="mb-4 text-center text-4xl font-bold tracking-tight sm:text-5xl">
+              Start free. Grow when you’re ready.
+            </h2>
+            <p data-reveal className="mx-auto mb-14 max-w-xl text-center text-lg text-ink-soft">
+              Your first {freeImages} images are free with no time limit. Paid plans add work processes and a fresh
+              allowance every month.
+            </p>
+
+            {plans ? (
+              <PlanGrid plans={plans.plans} signedIn={Boolean(user)} compact />
+            ) : (
+              <div role="status" className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+                <span className="sr-only">Loading plans…</span>
+                {[0, 1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-[26rem]" />
+                ))}
+              </div>
+            )}
+
+            <div data-reveal className="mt-10 text-center">
+              <ButtonLink to="/plans" variant="secondary">
+                Compare plans
+                <ArrowRight className="h-4 w-4" aria-hidden />
+              </ButtonLink>
+            </div>
+          </section>
+        )}
+
         {/* CTA */}
         <section className="mx-auto max-w-5xl px-4 py-20">
           <div
@@ -376,8 +440,8 @@ export default function Landing() {
             <h2 className="cta-title relative mx-auto mb-4 max-w-2xl text-4xl font-bold tracking-tight sm:text-5xl">
               Stop organizing assets by hand.
             </h2>
-            <p className="relative mx-auto mb-9 max-w-md text-lg text-ink/80">
-              Connect your Drive once. DriveTag takes it from there.
+            <p className="relative mx-auto mb-9 max-w-lg text-lg text-ink/80">
+              Connect your Drive once. Your first {freeImages} images are free — no credit card, no time limit.
             </p>
             <div className="relative">
               <ButtonLink to={ctaHref} variant="secondary" size="lg" magnetic>
@@ -391,13 +455,16 @@ export default function Landing() {
 
       <footer className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-5 border-t border-line px-4 py-10 sm:flex-row">
         <Logo size="sm" />
-        <nav className="flex items-center gap-5 text-sm font-bold text-ink-soft">
+        <nav aria-label="Footer" className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm font-bold text-ink-soft">
           <a href="#how" className="hover:text-ink">
             How it works
           </a>
           <a href="#privacy" className="hover:text-ink">
             Privacy
           </a>
+          <Link to="/plans" className="hover:text-ink">
+            Pricing
+          </Link>
           <Link to={user ? '/dashboard' : '/login'} className="hover:text-ink">
             {user ? 'Dashboard' : 'Log in'}
           </Link>

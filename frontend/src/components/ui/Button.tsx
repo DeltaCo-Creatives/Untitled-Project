@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react';
 import { Link } from 'react-router-dom';
 import { usePressMotion } from '../../hooks/usePressMotion';
 
@@ -40,11 +40,12 @@ export function Button({
   className,
   children,
   type = 'button',
+  ref,
   ...rest
-}: StyleProps & ButtonHTMLAttributes<HTMLButtonElement>) {
+}: StyleProps & ButtonHTMLAttributes<HTMLButtonElement> & { ref?: Ref<HTMLButtonElement> }) {
   const handlers = usePressMotion<HTMLButtonElement>(magnetic);
   return (
-    <button type={type} className={classes({ variant, size, className, children })} {...handlers} {...rest}>
+    <button ref={ref} type={type} className={classes({ variant, size, className, children })} {...handlers} {...rest}>
       {children}
     </button>
   );

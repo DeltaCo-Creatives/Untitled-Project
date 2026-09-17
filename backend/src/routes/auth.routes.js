@@ -3,10 +3,10 @@ import { env } from "../config/env.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { signState, verifyState } from "../utils/crypto.js";
 import { isAllowedFrontendOrigin } from "../utils/origins.js";
-import { buildConsentUrl, exchangeCode, DRIVE_SCOPES } from "../services/googleAuth.service.js";
-import { saveRefreshToken } from "../repositories/credentials.repo.js";
-import { startTrialIfNew } from "../repositories/subscription.repo.js";
+import { buildConsentUrl, exchangeCode } from "../services/googleAuth.service.js";
+import { claimGrant, parkGrant } from "../services/driveConnect.service.js";
 import { disconnectDrive } from "../services/driveWatch.service.js";
+import { HttpError } from "../utils/httpError.js";
 import { logger } from "../utils/logger.js";
 
 const router = Router();
@@ -24,8 +24,9 @@ router.post("/google/start", requireAuth, (req, res) => {
   res.json({ authUrl: buildConsentUrl(state) });
 });
 
-// Hit by Google's redirect, so it cannot carry a bearer token — the signed
-// state parameter carries the user id and proves we issued the request.
+// Hit by Google's redirect, so it cannot carry a bearer token. The signed state
+// proves we issued the request, but not who finished the consent screen, so the
+// grant is only parked here and claimed by the signed-in user (POST /google/complete).
 router.get("/google/callback", async (req, res) => {
   const { code, state, error: oauthError } = req.query;
 
@@ -47,15 +48,22 @@ router.get("/google/callback", async (req, res) => {
 
   try {
     const tokens = await exchangeCode(code);
-    await saveRefreshToken(userId, tokens.refresh_token, DRIVE_SCOPES);
-    await startTrialIfNew(userId);
-
-    logger.info("Drive connected", { userId });
-    res.redirect(`${frontend}/connect?connected=1`);
+    const pendingId = parkGrant(userId, tokens.refresh_token);
+    res.redirect(`${frontend}/connect?pending=${encodeURIComponent(pendingId)}`);
   } catch (err) {
     logger.error("OAuth code exchange failed", { userId, reason: err.message });
     res.redirect(`${frontend}/connect?error=exchange_failed`);
   }
+});
+
+/** Stores the parked Drive grant, only for the signed-in user who started the flow. */
+router.post("/google/complete", requireAuth, async (req, res) => {
+  const pendingId = req.body?.pending;
+  if (typeof pendingId !== "string" || !pendingId) {
+    throw new HttpError(400, "Missing the connection id.", { code: "invalid_request" });
+  }
+  await claimGrant(pendingId, req.user.id);
+  res.json({ connected: true });
 });
 
 router.delete("/google", requireAuth, async (req, res) => {

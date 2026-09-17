@@ -1,58 +1,92 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/requireAuth.js";
-import { listFolders, getFolder } from "../services/drive.service.js";
+import { createFolder, getFolderPath, listFolders } from "../services/drive.service.js";
 import { startWatch, stopWatch } from "../services/driveWatch.service.js";
 import { getRawFolderStatus, isSweeping, processRawFolder } from "../services/pipeline.service.js";
-import { getFolderConfig, saveFolderConfig } from "../repositories/folderConfig.repo.js";
+import { listForUser, saveForUser } from "../services/processes.service.js";
 import { getChannelForUser, isPollingChannel } from "../repositories/driveChannel.repo.js";
-import { getSubscription, isEntitled } from "../repositories/subscription.repo.js";
-import { serializeFolderConfig } from "../utils/serialize.js";
+import { HttpError } from "../utils/httpError.js";
+import { serializeLegacyFolderConfig } from "../utils/serialize.js";
 import { logger } from "../utils/logger.js";
 
 const router = Router();
 
 router.use(requireAuth);
 
-/** Folder list for the onboarding picker. */
+/** Folder browser: children of parentId ("root" = My Drive), or a name search across Drive. */
 router.get("/folders", async (req, res) => {
-  const folders = await listFolders(req.user.id, req.query.q);
-  res.json({ folders });
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const parentId = typeof req.query.parentId === "string" ? req.query.parentId : "root";
+  const pageToken = typeof req.query.pageToken === "string" ? req.query.pageToken : undefined;
+  res.json(await listFolders(req.user.id, { q, parentId, pageToken }));
 });
+
+/** "New folder" in the folder browser: an explicit user action. */
+router.post("/folders", async (req, res) => {
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  const parentId = typeof req.body?.parentId === "string" && req.body.parentId ? req.body.parentId : "root";
+  if (!name || name.length > 100) {
+    throw new HttpError(400, "Folder names need 1 to 100 characters.", { code: "invalid_folder_name" });
+  }
+  res.status(201).json({ folder: await createFolder(req.user.id, name, parentId) });
+});
+
+router.get("/folders/:id/path", async (req, res) => {
+  res.json(await getFolderPath(req.user.id, req.params.id));
+});
+
+// ---- Legacy single-folder endpoints, kept so an open tab of the previous
+// frontend keeps working through the deploy. Removed in the cleanup release.
 
 router.get("/config", async (req, res) => {
-  res.json({ config: serializeFolderConfig(await getFolderConfig(req.user.id)) });
+  const { processes } = await listForUser(req.user.id);
+  res.json({ config: serializeLegacyFolderConfig(processes[0]) });
 });
 
+/**
+ * The old single-folder save, mapped onto the user's first work process so it gets the same validation, plan limit,
+ * loop guard and folder checks as PUT /api/processes/:id. "Destination" becomes the Master folder, and Unsorted
+ * sorts into it, which is what the old app did.
+ */
 router.post("/config", async (req, res) => {
   const { rawFolderId, destinationFolderId } = req.body ?? {};
 
-  if (!rawFolderId || !destinationFolderId) {
+  if (typeof rawFolderId !== "string" || typeof destinationFolderId !== "string" || !rawFolderId || !destinationFolderId) {
     return res.status(400).json({ error: "rawFolderId and destinationFolderId are required" });
   }
-  if (rawFolderId === destinationFolderId) {
-    return res.status(400).json({ error: "Raw and destination folders must be different" });
-  }
 
-  // Confirm both exist and are folders this user can reach before saving.
-  const [raw, destination] = await Promise.all([
-    getFolder(req.user.id, rawFolderId),
-    getFolder(req.user.id, destinationFolderId),
-  ]);
+  const { processes } = await listForUser(req.user.id);
+  const first = processes[0];
+  const body = first
+    ? {
+        name: first.name,
+        rawFolderId,
+        masterFolderId: destinationFolderId,
+        renameTemplate: first.rename_template,
+        instructions: first.instructions,
+        timezone: first.timezone,
+        tagFields: first.tag_fields,
+        destinations: first.destinations.map((destination) => ({
+          id: destination.id,
+          name: destination.name,
+          description: destination.description,
+          isFallback: destination.is_fallback,
+          folder: destination.is_fallback ? { mode: "master" } : { mode: "existing", id: destination.folder_id },
+        })),
+      }
+    : {
+        name: "My first process",
+        rawFolderId,
+        masterFolderId: destinationFolderId,
+        renameTemplate: "{genre}_{subject}",
+        instructions: "",
+        timezone: "UTC",
+        tagFields: [],
+        destinations: [{ name: "Unsorted", description: "", isFallback: true, folder: { mode: "master" } }],
+      };
 
-  for (const folder of [raw, destination]) {
-    if (folder.mimeType !== "application/vnd.google-apps.folder" || folder.trashed) {
-      return res.status(400).json({ error: `${folder.id} is not an active folder` });
-    }
-  }
-
-  const config = await saveFolderConfig(req.user.id, {
-    rawFolderId,
-    rawFolderName: raw.name,
-    destinationFolderId,
-    destinationFolderName: destination.name,
-  });
-
-  res.json({ config: serializeFolderConfig(config) });
+  const process = await saveForUser(req.user.id, first?.id ?? null, body);
+  res.json({ config: serializeLegacyFolderConfig(process) });
 });
 
 router.get("/watch", async (req, res) => {
@@ -65,10 +99,11 @@ router.get("/watch", async (req, res) => {
   });
 });
 
+/** One watch per user covers every process: the whole changes feed is swept and matched to Raw folders. */
 router.post("/watch", async (req, res) => {
-  const config = await getFolderConfig(req.user.id);
-  if (!config) {
-    return res.status(409).json({ error: "Select folders before starting the watch" });
+  const { processes } = await listForUser(req.user.id);
+  if (!processes.some((process) => process.active)) {
+    return res.status(409).json({ error: "Create or turn on a work process before starting automatic sorting" });
   }
 
   const channel = await startWatch(req.user.id);
@@ -85,42 +120,37 @@ router.delete("/watch", async (req, res) => {
   res.json({ watching: false, stopped });
 });
 
-/** Images currently in the Raw folder: waiting, being processed, or failed. */
+/** Legacy: images waiting in every active process's Raw folder, summed. */
 router.get("/raw-status", async (req, res) => {
-  const config = await getFolderConfig(req.user.id);
-  if (!config) {
+  const { processes } = await listForUser(req.user.id);
+  const active = processes.filter((process) => process.active);
+  if (processes.length === 0) {
     return res.status(409).json({ error: "Select folders first" });
   }
-  res.json(await getRawFolderStatus(req.user.id, config));
+  res.json(await getRawFolderStatus(req.user.id, active));
 });
 
-/**
- * "Organize now": tag, rename and move the images already sitting in Raw.
- * Checks folders and entitlement up front so no Gemini spend happens for a
- * user who can't be served, then acks and works in the background.
- */
+/** Legacy "Organize now": every active process. */
 router.post("/organize", async (req, res) => {
   const userId = req.user.id;
   const retryFailed = req.body?.retryFailed === true;
 
-  const [config, subscription] = await Promise.all([getFolderConfig(userId), getSubscription(userId)]);
-  if (!config) {
+  const { processes, entitlement } = await listForUser(userId);
+  if (processes.length === 0) {
     return res.status(409).json({ error: "Select folders first" });
   }
-  if (!isEntitled(subscription)) {
-    return res.status(402).json({ error: "Your trial has ended, so tagging is paused." });
+  if (!entitlement || entitlement.credits <= 0) {
+    return res.status(402).json({ error: "You're out of images, so tagging is paused." });
   }
   if (isSweeping(userId)) {
     return res.json({ started: false, reason: "DriveTag is already organizing your folder." });
   }
 
-  res.status(202).json({ started: true });
-
-  setImmediate(() => {
-    processRawFolder(userId, { retryFailed }).catch((err) => {
-      logger.error("Organize now failed", { userId, reason: err.message });
-    });
+  // Started in this tick so the slot is reserved before anything else can take it.
+  processRawFolder(userId, { retryFailed }).catch((err) => {
+    logger.error("Organize now failed", { userId, reason: err.message });
   });
+  res.status(202).json({ started: true });
 });
 
 export default router;

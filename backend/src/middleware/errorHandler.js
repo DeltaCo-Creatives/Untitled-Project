@@ -7,13 +7,23 @@ export function notFound(req, res) {
 
 // Express 5 forwards rejected async handlers here automatically.
 export function errorHandler(err, req, res, next) {
-  logger.error("Unhandled request error", {
+  const status = err.status || err.statusCode || 500;
+  // Only errors marked safe (HttpError, body-parser's malformed JSON) keep their
+  // message in production. Google API errors also carry a status but aren't.
+  const expose = status < 500 && err.expose === true;
+
+  (status < 500 ? logger.warn : logger.error)("Request error", {
     method: req.method,
     path: req.path,
+    status,
     reason: err.message,
   });
 
-  res.status(err.status || 500).json({
-    error: env.nodeEnv === "production" ? "Internal server error" : err.message,
-  });
+  const body = {
+    error: expose || env.nodeEnv !== "production" ? err.message : "Internal server error",
+  };
+  if (expose && err.code) body.code = err.code;
+  if (expose && err.details) body.details = err.details;
+
+  res.status(status).json(body);
 }

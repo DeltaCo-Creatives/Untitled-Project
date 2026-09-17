@@ -5,6 +5,8 @@ import driveWebhookRouter from "./routes/driveWebhook.routes.js";
 import authRouter from "./routes/auth.routes.js";
 import driveRouter from "./routes/drive.routes.js";
 import accountRouter from "./routes/account.routes.js";
+import plansRouter from "./routes/plans.routes.js";
+import processesRouter from "./routes/processes.routes.js";
 import { notFound, errorHandler } from "./middleware/errorHandler.js";
 
 // Requests without an Origin header (curl, Google's webhook) aren't browser CORS requests.
@@ -29,6 +31,10 @@ export function createApp() {
 
   app.use("/api/auth", authRouter);
   app.use("/api/drive", driveRouter);
+  // Before accountRouter: its requireAuth runs for every /api/* request that reaches it,
+  // which would put the public /api/plans behind a login.
+  app.use("/api/plans", plansRouter);
+  app.use("/api/processes", processesRouter);
   app.use("/api", accountRouter);
 
   app.use(notFound);
