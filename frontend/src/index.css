@@ -1,7 +1,54 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: "Nunito", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fredoka", "Nunito", ui-sans-serif, system-ui, sans-serif;
+
+  --color-canvas: #faf8ff;
+  --color-ink: #25204a;
+  --color-ink-soft: #6b6590;
+  --color-line: #e9e3ff;
+
+  --color-lavender: #b9a6ff;
+  --color-lavender-deep: #9c86f5;
+  --color-lavender-soft: #efe9ff;
+  --color-periwinkle: #a9c4ff;
+  --color-periwinkle-soft: #e6eeff;
+  --color-butter: #ffe7a0;
+  --color-butter-soft: #fff6d9;
+  --color-sage: #bfe3c8;
+  --color-sage-deep: #3f7a52;
+  --color-sage-soft: #e8f6ec;
+  --color-rose: #ffd1da;
+  --color-rose-ink: #8a2340;
+  --color-rose-soft: #fff0f3;
+
+  --shadow-soft: 0 1px 2px rgb(37 32 74 / 0.04), 0 10px 28px -10px rgb(124 104 214 / 0.22);
+  --shadow-lift: 0 2px 4px rgb(37 32 74 / 0.05), 0 22px 44px -14px rgb(124 104 214 / 0.34);
+}
+
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
-    @apply bg-slate-950 text-slate-200 font-sans antialiased;
+    @apply bg-canvas text-ink font-sans antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+  }
+
+  ::selection {
+    @apply bg-lavender text-ink;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
 }

@@ -19,6 +19,31 @@ export async function listFolders(userId, query) {
   return data.files ?? [];
 }
 
+const MAX_FOLDER_SCAN = 500;
+
+/** Supported images currently sitting directly in a folder, for on-demand organizing. */
+export async function listImagesInFolder(userId, folderId, mimeTypes) {
+  const drive = await driveFor(userId);
+  const mimeClause = mimeTypes.map((type) => `mimeType = '${type}'`).join(" or ");
+  const q = `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false and (${mimeClause})`;
+
+  const files = [];
+  let pageToken;
+  do {
+    const { data } = await drive.files.list({
+      q,
+      fields: "nextPageToken, files(id, name, mimeType, size, parents, trashed)",
+      pageSize: 100,
+      orderBy: "createdTime",
+      pageToken,
+    });
+    files.push(...(data.files ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken && files.length < MAX_FOLDER_SCAN);
+
+  return files.slice(0, MAX_FOLDER_SCAN);
+}
+
 export async function getFolder(userId, folderId) {
   const drive = await driveFor(userId);
   const { data } = await drive.files.get({

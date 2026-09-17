@@ -44,6 +44,45 @@ export async function recordFailure(userId, fileId, message) {
   if (error) throw new Error(`Failed to record failure: ${error.message}`);
 }
 
+// Keeps `in (...)` filters well under PostgREST's URL length limit.
+const ID_BATCH = 100;
+
+function batches(ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += ID_BATCH) out.push(ids.slice(i, i + ID_BATCH));
+  return out;
+}
+
+/** Map of file_id → status for the given files; ids with no row are simply absent. */
+export async function getStatuses(userId, fileIds) {
+  const statuses = new Map();
+  for (const ids of batches(fileIds)) {
+    const { data, error } = await supabase
+      .from("processed_files")
+      .select("file_id, status")
+      .eq("user_id", userId)
+      .in("file_id", ids);
+
+    if (error) throw new Error(`Failed to load file statuses: ${error.message}`);
+    for (const row of data ?? []) statuses.set(row.file_id, row.status);
+  }
+  return statuses;
+}
+
+/** Frees failed claims so those files can be attempted again. */
+export async function releaseFailed(userId, fileIds) {
+  for (const ids of batches(fileIds)) {
+    const { error } = await supabase
+      .from("processed_files")
+      .delete()
+      .eq("user_id", userId)
+      .eq("status", "failed")
+      .in("file_id", ids);
+
+    if (error) throw new Error(`Failed to release failed files: ${error.message}`);
+  }
+}
+
 export async function releaseClaim(userId, fileId) {
   await supabase.from("processed_files").delete().eq("user_id", userId).eq("file_id", fileId);
 }

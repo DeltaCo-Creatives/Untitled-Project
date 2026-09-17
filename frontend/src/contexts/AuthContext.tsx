@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { PageLoader } from '../components/ui/Skeleton';
 
 interface AuthContextType {
   session: Session | null;
@@ -56,7 +57,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut
   };
 
-  return <AuthContext.Provider value={value}>{!loading && children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {loading ? <PageLoader label="Checking your session" /> : children}
+    </AuthContext.Provider>
+  );
 }
 
 export const useAuth = () => {

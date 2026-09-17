@@ -2,6 +2,7 @@ import { Router } from "express";
 import { env } from "../config/env.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { signState, verifyState } from "../utils/crypto.js";
+import { isAllowedFrontendOrigin } from "../utils/origins.js";
 import {
   buildConsentUrl,
   exchangeCode,
@@ -20,7 +21,11 @@ const router = Router();
  * runs while the user is away, so it needs its own offline refresh token.
  */
 router.post("/google/start", requireAuth, (req, res) => {
-  const state = signState({ userId: req.user.id });
+  // The browser session lives on whichever frontend origin started this, so
+  // return there. Signed into the state, so the callback can trust it.
+  const origin = req.header("Origin");
+  const returnTo = isAllowedFrontendOrigin(origin) ? origin : env.frontend.url;
+  const state = signState({ userId: req.user.id, returnTo });
   res.json({ authUrl: buildConsentUrl(state) });
 });
 
@@ -29,16 +34,20 @@ router.post("/google/start", requireAuth, (req, res) => {
 router.get("/google/callback", async (req, res) => {
   const { code, state, error: oauthError } = req.query;
 
-  if (oauthError) {
-    return res.redirect(`${env.frontend.url}/connect?error=${encodeURIComponent(oauthError)}`);
-  }
-
-  let userId;
+  let payload;
   try {
-    ({ userId } = verifyState(state));
+    payload = verifyState(state);
   } catch (err) {
     logger.warn("Rejected OAuth callback", { reason: err.message });
-    return res.redirect(`${env.frontend.url}/connect?error=invalid_state`);
+    const reason = oauthError ? String(oauthError) : "invalid_state";
+    return res.redirect(`${env.frontend.url}/connect?error=${encodeURIComponent(reason)}`);
+  }
+
+  const { userId } = payload;
+  const frontend = isAllowedFrontendOrigin(payload.returnTo) ? payload.returnTo : env.frontend.url;
+
+  if (oauthError) {
+    return res.redirect(`${frontend}/connect?error=${encodeURIComponent(oauthError)}`);
   }
 
   try {
@@ -47,10 +56,10 @@ router.get("/google/callback", async (req, res) => {
     await startTrialIfNew(userId);
 
     logger.info("Drive connected", { userId });
-    res.redirect(`${env.frontend.url}/connect?connected=1`);
+    res.redirect(`${frontend}/connect?connected=1`);
   } catch (err) {
     logger.error("OAuth code exchange failed", { userId, reason: err.message });
-    res.redirect(`${env.frontend.url}/connect?error=exchange_failed`);
+    res.redirect(`${frontend}/connect?error=exchange_failed`);
   }
 });
 

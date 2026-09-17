@@ -14,28 +14,48 @@ export interface FolderConfig {
   destinationFolderName: string;
 }
 
+export type WatchMode = 'live' | 'polling';
+
 export interface MeResponse {
   user: { id: string; email: string | undefined };
   driveConnected: boolean;
   config: FolderConfig | null;
   watching: boolean;
+  /** `polling` = Google refused the webhook, so the backend checks the folder on a timer. */
+  watchMode: WatchMode | null;
   watchExpiresAt: string | null;
+  autoSyncSeconds: number | null;
   subscription: {
     status: string;
-    plan: string;
+    plan: string | null;
     trialEndsAt: string | null;
     currentPeriodEnd: string | null;
   } | null;
   entitled: boolean;
 }
 
+export interface RawStatus {
+  waiting: number;
+  processing: number;
+  failed: number;
+  total: number;
+  syncing: boolean;
+}
+
+export interface ActivityTags {
+  genre?: string;
+  subject?: string;
+  style?: string;
+}
+
 export interface ActivityEntry {
-  id: string;
   file_id: string;
   original_name: string | null;
   new_name: string | null;
-  created_at: string;
-  [key: string]: unknown;
+  tags: ActivityTags | null;
+  status: 'processing' | 'completed' | 'failed';
+  error_message: string | null;
+  processed_at: string | null;
 }
 
 export class ApiError extends Error {
@@ -57,7 +77,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers.set('Authorization', `Bearer ${session.access_token}`);
   }
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  } catch {
+    // fetch only rejects on network/CORS failures, which the browser reports as a bare "Failed to fetch".
+    throw new ApiError(
+      `Couldn't reach the DriveTag server at ${API_URL}. Check that the backend is running and that this page's address (${window.location.origin}) is listed in CORS_ORIGINS.`,
+      0,
+    );
+  }
 
   if (!res.ok) {
     let message = res.statusText || `Request failed with status ${res.status}`;
@@ -91,7 +120,16 @@ export const api = {
       body: JSON.stringify({ rawFolderId, destinationFolderId }),
     }),
 
-  getWatch: () => request<{ watching: boolean; expiresAt: string | null }>('/api/drive/watch'),
-  startWatch: () => request<{ watching: boolean; expiresAt: string }>('/api/drive/watch', { method: 'POST' }),
+  getWatch: () =>
+    request<{ watching: boolean; mode: WatchMode | null; expiresAt: string | null }>('/api/drive/watch'),
+  startWatch: () =>
+    request<{ watching: boolean; mode: WatchMode; expiresAt: string | null }>('/api/drive/watch', { method: 'POST' }),
   stopWatch: () => request<{ watching: boolean; stopped: boolean }>('/api/drive/watch', { method: 'DELETE' }),
+
+  rawStatus: () => request<RawStatus>('/api/drive/raw-status'),
+  organize: (retryFailed = false) =>
+    request<{ started: boolean; reason?: string }>('/api/drive/organize', {
+      method: 'POST',
+      body: JSON.stringify({ retryFailed }),
+    }),
 };

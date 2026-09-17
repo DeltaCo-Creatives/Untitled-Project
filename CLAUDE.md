@@ -14,8 +14,8 @@ DriveTag AI is a B2B micro-SaaS that automatically organizes visual assets for c
 
 **[Handover.md](Handover.md) is the authoritative snapshot of current state and next steps — read it before starting work, and update it when state changes.** In brief:
 
-- **Backend:** complete for Loops A and B — Drive OAuth, folder config, watch-channel lifecycle, the change-feed sweep, Gemini classification, and rename/move are all wired together. The full Drive loop has never run against a real Drive.
-- **Frontend:** a React 19 + Vite + Tailwind shell (`Login`, `Onboarding`, `Dashboard`, `AuthContext`, `ProtectedRoute`) that **makes no calls to the backend** and uses **mocked auth** — `AuthContext.signInWithGoogle` fabricates a `dummy-token` user, and Onboarding's folder IDs are hardcoded. Don't assume a screen works because it renders. Wiring the frontend to real auth and the API is the largest open task.
+- **Backend:** complete for Loops A and B — Drive OAuth, folder config, watch-channel lifecycle, the change-feed sweep, Gemini classification, and rename/move are all wired together. It also has a polling fallback for local dev and "Organize now" for images already in Raw. The full Drive loop has never run against a real Drive: no account has connected Drive yet.
+- **Frontend:** React 19 + Vite + Tailwind with real Supabase Google login and every screen backed by the API (`src/lib/api.ts`). Pages: Landing `/`, `/login`, and protected `/onboarding`, `/dashboard`, `/connect`. The whole UI uses a pastel "Lavender garden" design system and GSAP animation throughout. Real sign-in works; the full Drive loop (connect → watch → drop image → renamed) hasn't been run yet.
 - **Credentials:** accounts were set up and live-verified in a *different* working copy. `.env` files are gitignored and don't travel through git, so a given checkout may have blank credentials — `npm run dev` names what's missing. Both `.env.example` templates were deleted in commit `0bdd63d`; [tutorial.md](tutorial.md) lists every variable.
 - **Not built:** the payment-provider webhook (Lemon Squeezy vs Paddle undecided; the subscription gate it feeds exists).
 - **Domain:** `drivetag-ai.com` is purchased but not yet wired — see [domainguide.md](domainguide.md).
@@ -24,7 +24,9 @@ Other docs: [task.md](task.md) (scope checklist), [ForDev.md](ForDev.md) (setup 
 
 ## Tech Stack & Hosting
 
-- **Frontend:** React 19 + Vite + Tailwind 4 + react-router, TypeScript. Hosted on Vercel (Root Directory: `frontend`). Lint via `oxlint`. Visitor analytics via `@vercel/analytics` in `src/components/RouteAnalytics.tsx`. Animation via GSAP (`gsap` + `@gsap/react`, use the `useGSAP` hook for cleanup) — project GSAP skills live in `.claude/skills/`.
+- **Frontend:** React 19 + Vite + Tailwind 4 + react-router, TypeScript. Hosted on Vercel (Root Directory: `frontend`). Lint via `oxlint`. Visitor analytics via `@vercel/analytics` in `src/components/RouteAnalytics.tsx`.
+  - **Styling:** design tokens live in `src/index.css` `@theme` (`canvas`, `ink`, `lavender`, `periwinkle`, `butter`, `sage`, `rose` + `-soft` tints). Use those rather than raw Tailwind palette colors. Fonts: Fredoka (headings) and Nunito (body).
+  - **Animation:** GSAP. Import it from `src/lib/gsap.ts`, which registers plugins once — not from `gsap` directly. Use `useGSAP`, and gate motion behind `gsap.matchMedia()` with `MOTION_OK` / `REDUCED_MOTION`. Project GSAP skills live in `.claude/skills/`.
 - **Backend:** Node.js + Express 5 (ESM). Hosted on DigitalOcean App Platform (Source Directory: `/backend`).
 - **Database & Auth:** Supabase (PostgreSQL), project `ckskwjtjydaqewwojsfj` — Google login for identity, plus all app tables.
 - **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON. Default model `gemini-3.6-flash` — Google retired `gemini-2.5-flash` for new users, and a stale `GEMINI_MODEL` in a local `.env` overrides the default.
@@ -53,22 +55,31 @@ backend/
 │   │   ├── drive.service.js        file bytes, rename/move, changes feed
 │   │   ├── driveWatch.service.js   channel start/stop/renew
 │   │   ├── gemini.service.js       classifyImage() → {genre, subject, style}
-│   │   └── pipeline.service.js     Loop B orchestration
+│   │   ├── pipeline.service.js     Loop B sweeps, Organize now, Raw folder status
+│   │   └── autoSync.service.js     polling fallback for channels Google won't push to
 │   ├── repositories/          one module per table, all Supabase access
-│   └── utils/                 logger (redacting), crypto (AES-GCM + HMAC state), filename
+│   └── utils/                 logger (redacting), crypto (AES-GCM + HMAC state), filename, origins, serialize
 └── scripts/
     ├── test-gemini.js         standalone Gemini probe
     ├── renew-channels.js      cron entrypoint for channel renewal
     └── get-token.js           mint a Supabase access token for curl testing
 
 frontend/src/
-├── App.tsx                    routes: / (Login), /onboarding, /dashboard (protected)
-├── contexts/AuthContext.tsx   session state — currently a dummy login
+├── App.tsx                    routes: / (Landing), /login, /onboarding + /dashboard + /connect (protected)
+├── index.css                  Tailwind @theme design tokens
+├── contexts/AuthContext.tsx   Supabase session + Google sign-in
 ├── components/
 │   ├── ProtectedRoute.tsx
-│   └── RouteAnalytics.tsx     Vercel Analytics + URL redaction
-├── lib/supabase.ts            anon-key client
-└── pages/                     Login, Onboarding, Dashboard
+│   ├── RouteAnalytics.tsx     Vercel Analytics + URL redaction
+│   ├── TagFlowIllustration.tsx, MemoryDemo.tsx   animated marketing illustrations
+│   └── ui/                    Button, Card, Logo, Skeleton, AnimatedNumber, BlobBackground
+├── hooks/                     usePressMotion, useReveal
+├── lib/
+│   ├── supabase.ts            anon-key client
+│   ├── api.ts                 typed backend client (Bearer token, readable network/CORS errors)
+│   ├── gsap.ts                plugin registration + reduced-motion queries
+│   └── confetti.ts
+└── pages/                     Landing, Login, Onboarding, Connect, Dashboard
 
 supabase/migrations/0001_init.sql   schema + RLS (source of truth), at the repo root
 ```
@@ -82,11 +93,21 @@ These were deliberate and are easy to "fix" wrongly:
 - **We watch the user's changes feed, not the Raw folder.** Drive's per-file watch on a folder does not reliably fire for files added inside it. So `changes.watch` + `changes.list(pageToken)` is used, filtered to the Raw folder. This is why `drive_channels.page_token` exists and must be advanced after every sweep.
 - **Drive authorization is a separate OAuth grant from Supabase login.** The pipeline runs while the user is absent, so it needs its own offline refresh token; Supabase does not durably hand one over. `/api/auth/google/*` implements that flow, with a signed+expiring `state` param instead of a session cookie.
 - **Env loading is centralized in `config/env.js`, which calls `dotenv.config()` in its own module body.** ESM hoists imports, so calling `dotenv.config()` in an entrypoint body runs *after* imported modules have already read `process.env`. For the same reason `server.js` validates env and then `await import()`s the app — otherwise Supabase's constructor throws before the readable "you forgot these vars" error.
-- **Idempotency lives in the database.** `processed_files` has `unique (user_id, file_id)`; claiming a file before processing is what makes Drive's duplicate/retried notifications safe. The in-memory `inFlight` set in the pipeline is only a cost optimization, not the correctness guarantee.
+- **Idempotency lives in the database.** `processed_files` has `unique (user_id, file_id)`; claiming a file before processing is what makes Drive's duplicate/retried notifications safe. The in-memory `inFlight` set in the pipeline is only a cost optimization, not the correctness guarantee. It is shared by webhook sweeps, polling sweeps and "Organize now", and its `syncing` flag is what the dashboard polls on.
+- **Polling fallback reuses `drive_channels`.** Google refuses webhook addresses without a public, verified domain (always the case on localhost). When `AUTO_SYNC_INTERVAL_SECONDS > 0`, `startWatch` falls back to storing a channel with `resource_id = 'polling'` and a far-future expiry:
+  - `services/autoSync.service.js` runs the normal `processNotification` on those rows each interval, so live and polling modes share one code path.
+  - Deleting the row pauses it.
+  - The renewal job ignores these rows.
+  - Off (`0`) by default.
+- **The changes feed never reports files that were already in Raw.** `POST /api/drive/organize` lists the Raw folder directly and runs the same `processFile`. It only starts on an explicit click, so existing client files are never moved without consent. Passing `retryFailed: true` frees `failed` claims first.
+- **Folder config is camelCase on the wire.** Repositories return snake_case rows; routes pass `folder_configs` through `utils/serialize.js`. Activity rows stay snake_case, and the frontend types match that.
+- **Drive-connect returns to the origin that started it.** `POST /api/auth/google/start` signs the request's `Origin` into the OAuth `state`, provided `utils/origins.js` allows it, and the callback redirects there. Dev CORS allows any `localhost` port; production uses `CORS_ORIGINS` only, so `NODE_ENV=production` must be set when deployed.
 - **The webhook acks before processing.** Google retries on non-2xx and expects a fast response, so the sweep runs in `setImmediate` after `res.sendStatus(200)`.
 - **The subscription gate fails closed** and is checked before any Gemini spend. A trial row is created on first Drive connect so onboarding works pre-billing.
 - **Vercel Analytics gets explicit `route`/`path` props and a `beforeSend` redactor** (`frontend/src/components/RouteAnalytics.tsx`). The script's auto-tracking only hooks `history.pushState`, so `<Navigate replace />` redirects — including login → dashboard — went uncounted. The redactor strips the hash and every query param except `utm_*`, because OAuth returns put Supabase tokens and `code`/`state` in the URL. Don't swap it for a bare `<Analytics />`. In dev, StrictMode logs the first view twice; production sends one.
 - **Full `drive` scope is required**, not `drive.file` — the app must read files other people drop in the folder. This makes the app subject to Google restricted-scope verification; see the warning in ForDev.md.
+- **The frontend dev server uses `strictPort` on 5173.** Supabase's redirect allowlist names that origin, and silently drifting to 5174 used to break every API call with a bare "Failed to fetch". Dev CORS now tolerates other localhost ports too, but keep `strictPort` so there's one canonical dev origin.
+- **`@gsap/react` doesn't revert between dependency changes by default.** Pass `revertOnUpdate: true` to `useGSAP` whenever a dependency-driven effect starts looping or stateful animations, or they stack up.
 - **The Drive webhook needs a Google-verified domain.** Drive refuses to register a watch on an address whose domain isn't verified in the Cloud project, so free ngrok URLs and `*.ondigitalocean.app` can't receive notifications. Production is planned as `api.drivetag-ai.com`.
 
 ## Commands
@@ -118,6 +139,8 @@ From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && v
 | GET | `/api/drive/folders` | Bearer |
 | GET/POST | `/api/drive/config` | Bearer |
 | GET/POST/DELETE | `/api/drive/watch` | Bearer |
+| GET | `/api/drive/raw-status` | Bearer |
+| POST | `/api/drive/organize` | Bearer |
 | GET | `/api/me` | Bearer |
 | GET | `/api/activity` | Bearer |
 

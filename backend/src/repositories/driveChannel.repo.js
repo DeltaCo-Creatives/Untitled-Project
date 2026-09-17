@@ -53,11 +53,32 @@ export async function deleteChannel(channelId) {
   if (error) throw new Error(`Failed to delete Drive channel: ${error.message}`);
 }
 
-/** Channels whose Drive-issued expiration falls within the given window. */
+/**
+ * Polling-mode channels are rows with this resource_id instead of a Drive
+ * resource: the auto-sync poller sweeps them because Google won't push to us.
+ */
+export const POLLING_RESOURCE_ID = "polling";
+
+export function isPollingChannel(channel) {
+  return channel?.resource_id === POLLING_RESOURCE_ID;
+}
+
+export async function listPollingChannels() {
+  const { data, error } = await supabase
+    .from("drive_channels")
+    .select("*")
+    .eq("resource_id", POLLING_RESOURCE_ID);
+
+  if (error) throw new Error(`Failed to list polling channels: ${error.message}`);
+  return data ?? [];
+}
+
+/** Live channels whose Drive-issued expiration falls within the given window. */
 export async function listExpiringChannels(beforeIso) {
   const { data, error } = await supabase
     .from("drive_channels")
     .select("*")
+    .neq("resource_id", POLLING_RESOURCE_ID)
     .lt("expires_at", beforeIso);
 
   if (error) throw new Error(`Failed to list expiring channels: ${error.message}`);

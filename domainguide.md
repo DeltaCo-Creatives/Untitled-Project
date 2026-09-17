@@ -10,6 +10,7 @@ This isn't cosmetic — owning and verifying this domain is what unblocks the Dr
 
 - `drivetag-ai.com` → Vercel (the frontend)
 - `api.drivetag-ai.com` → DigitalOcean (the backend)
+- `auth.drivetag-ai.com` → Supabase custom domain (the Google sign-in redirect — §9)
 
 A subdomain for the API keeps redirect URIs and CORS simple and is the standard pattern. Google's domain verification covers the whole domain, subdomains included, so you only verify once.
 
@@ -116,6 +117,55 @@ Once a real user connects Drive in production, `POST /api/drive/watch` is the tr
 
 ---
 
+## 9. Make Google's sign-in screen say "DriveTag AI", not `ckskwjtjydaqewwojsfj.supabase.co`
+
+**Why it happens:** "Continue with Google" goes through Supabase's own domain, so Google shows *that* domain on the consent screen. Google only shows your app's name and logo once your brand is verified. Supabase's own docs recommend fixing both. The Drive-permission screen (the second Google prompt) goes through the backend instead, so once the backend is on `api.drivetag-ai.com` it shows your domain already.
+
+Do these in order. The only code-level change is one env var in step 3.
+
+### 9a. Supabase custom domain → `auth.drivetag-ai.com`
+
+1. Supabase needs a **paid plan** plus the **Custom Domain add-on** (Project Settings → Add-ons). Check current pricing before enabling it.
+2. Supabase dashboard → Project Settings → **Custom Domains** → enter `auth.drivetag-ai.com`. It shows the exact records to add.
+3. Namecheap → Advanced DNS → add them exactly as shown. Usually that's:
+   - **CNAME** — Host `auth` → `ckskwjtjydaqewwojsfj.supabase.co`
+   - **TXT** — Host `_acme-challenge.auth` → the value Supabase shows (proves ownership and issues the SSL cert)
+4. Wait for DNS, then verify and activate, either in the dashboard or with the Supabase CLI:
+   ```bash
+   supabase domains reverify --project-ref ckskwjtjydaqewwojsfj
+   ```
+   ```bash
+   supabase domains activate --project-ref ckskwjtjydaqewwojsfj
+   ```
+   The old `ckskwjtjydaqewwojsfj.supabase.co` address keeps working after activation, so nothing breaks mid-switch.
+
+### 9b. Register the new callback with Google
+
+Google Cloud Console → APIs & Services → **Credentials** → the OAuth client → **Authorized redirect URIs** → **add** (don't replace the existing Supabase one yet):
+```
+https://auth.drivetag-ai.com/auth/v1/callback
+```
+
+### 9c. Point the frontend at the custom domain
+
+Set `VITE_SUPABASE_URL=https://auth.drivetag-ai.com` in `frontend/.env` **and** in Vercel → Project → Environment Variables, then redeploy. No code change — `frontend/src/lib/supabase.ts` already reads this variable. Click "Continue with Google": the screen should now say `auth.drivetag-ai.com`.
+
+### 9d. Verify your brand with Google (shows the name + logo)
+
+Google Cloud Console → **Google Auth Platform → Branding**:
+- **App name:** DriveTag AI
+- **App logo:** 120×120 PNG/JPG — `frontend/public/favicon.svg` is the mark; export it at 120×120
+- **User support email** and **developer contact email**
+- **App home page:** `https://drivetag-ai.com`. It must be live (Vercel, §2)
+- **Privacy policy** and **Terms of service** links. These pages must exist on `drivetag-ai.com`, and neither is written yet.
+- **Authorized domains:** `drivetag-ai.com`, which must already be verified (§4)
+
+Then submit for **brand verification**. Google says it takes a few business days. Until approved, Google keeps showing the domain rather than the name.
+
+> This is **brand** verification only. Because the app requests the restricted `drive` scope, serving users beyond your test-user list *also* needs Google's separate app verification (see the warning in [ForDev.md](ForDev.md) §3).
+
+---
+
 ## Checklist
 
 - [ ] Confirmed Namecheap nameservers + domain privacy (§1)
@@ -128,3 +178,8 @@ Once a real user connects Drive in production, `POST /api/drive/watch` is the tr
 - [ ] Supabase Site URL + redirect allowlist updated (§7)
 - [ ] `/health` and the frontend both load over `https://` with a valid cert (§8)
 - [ ] A real Drive-connected user can start a watch without the `Unauthorized WebHook callback channel` error (§8)
+- [ ] Supabase Custom Domain add-on enabled, `auth` CNAME + `_acme-challenge` TXT added, domain activated (§9a)
+- [ ] `https://auth.drivetag-ai.com/auth/v1/callback` added to the OAuth client (§9b)
+- [ ] `VITE_SUPABASE_URL` switched to `https://auth.drivetag-ai.com` locally and in Vercel (§9c)
+- [ ] Privacy policy + terms pages live on `drivetag-ai.com` (§9d prerequisite)
+- [ ] Branding filled in and brand verification submitted/approved (§9d)

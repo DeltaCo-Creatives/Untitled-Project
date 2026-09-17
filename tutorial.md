@@ -25,6 +25,8 @@ How to obtain each value in `backend/.env` and `frontend/.env`, where it comes f
 | `TOKEN_ENCRYPTION_KEY` | Random, self-generated | 🔴 Yes | ✅ Pre-generated |
 | `OAUTH_STATE_SECRET` | Random, self-generated | 🔴 Yes | ✅ Pre-generated |
 | `FRONTEND_URL`, `CORS_ORIGINS`, `PORT`, `TRIAL_DAYS` | Configuration | No | ✅ Pre-set |
+| `AUTO_SYNC_INTERVAL_SECONDS` | Configuration. Seconds between polling sweeps when Google refuses the webhook, e.g. on localhost. `0` or unset = off. Local dev: `60` | No | Optional |
+| `NODE_ENV` | Must be `production` when deployed: it locks CORS to `CORS_ORIGINS`. Locally `development` also allows any `localhost` port | No | ✅ Pre-set |
 
 The values you obtain from a service are `GEMINI_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `DRIVE_WEBHOOK_URL`, plus `SUPABASE_ANON_KEY` for the token helper. Everything marked Pre-set or Pre-generated is a default or a random secret you create yourself (§5).
 

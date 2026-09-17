@@ -65,6 +65,13 @@ export const env = {
   // Days of access granted on first Drive connect, before a paid subscription
   // is required. Change this one value to alter trial policy.
   trialDays: Number(optional("TRIAL_DAYS", "14")),
+
+  // When > 0, a Drive watch that Google refuses (e.g. no public verified webhook
+  // domain, as on localhost) falls back to polling the changes feed this often.
+  // 0 disables it: webhooks only.
+  autoSync: {
+    intervalSeconds: Number(optional("AUTO_SYNC_INTERVAL_SECONDS", "0")),
+  },
 };
 
 /**

@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { getFolderConfig } from "../repositories/folderConfig.repo.js";
-import { getChannelForUser } from "../repositories/driveChannel.repo.js";
+import { env } from "../config/env.js";
+import { getChannelForUser, isPollingChannel } from "../repositories/driveChannel.repo.js";
+import { serializeFolderConfig } from "../utils/serialize.js";
 import { getSubscription, isEntitled } from "../repositories/subscription.repo.js";
 import { getRefreshToken } from "../repositories/credentials.repo.js";
 import { listRecent } from "../repositories/processedFile.repo.js";
@@ -20,12 +22,16 @@ router.get("/me", async (req, res) => {
     getSubscription(userId),
   ]);
 
+  const polling = isPollingChannel(channel);
+
   res.json({
     user: { id: userId, email: req.user.email },
     driveConnected: Boolean(credential),
-    config,
+    config: serializeFolderConfig(config),
     watching: Boolean(channel),
-    watchExpiresAt: channel?.expires_at ?? null,
+    watchMode: channel ? (polling ? "polling" : "live") : null,
+    watchExpiresAt: channel && !polling ? channel.expires_at : null,
+    autoSyncSeconds: env.autoSync.intervalSeconds > 0 ? env.autoSync.intervalSeconds : null,
     subscription: subscription
       ? {
           status: subscription.status,
