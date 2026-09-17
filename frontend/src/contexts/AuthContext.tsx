@@ -36,32 +36,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signInWithGoogle = async () => {
-    // DUMMY LOGIN FLOW for testing UI
-    const dummyUser: User = {
-      id: 'dummy-123',
-      app_metadata: {},
-      user_metadata: {},
-      aud: 'authenticated',
-      created_at: new Date().toISOString(),
-      email: 'founder@drivetagai.com',
-    };
-    const dummySession: Session = {
-      access_token: 'dummy-token',
-      refresh_token: 'dummy-refresh',
-      expires_in: 3600,
-      expires_at: Math.floor(Date.now() / 1000) + 3600,
-      token_type: 'bearer',
-      user: dummyUser,
-    };
-    
-    setSession(dummySession);
-    setUser(dummyUser);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/dashboard` },
+    });
+    if (error) throw error;
   };
 
   const signOut = async () => {
-    // DUMMY SIGNOUT FLOW
-    setSession(null);
-    setUser(null);
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
   };
 
   const value = {

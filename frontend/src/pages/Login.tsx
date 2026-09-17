@@ -1,13 +1,24 @@
+import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
 import { HardDrive } from 'lucide-react';
 
 export default function Login() {
   const { user, signInWithGoogle } = useAuth();
+  const [error, setError] = useState<string | null>(null);
 
   if (user) {
     return <Navigate to="/dashboard" replace />;
   }
+
+  const handleSignIn = async () => {
+    setError(null);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sign in with Google');
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden">
@@ -28,8 +39,14 @@ export default function Login() {
           The invisible AI assistant that magically organizes your Google Drive assets in the background.
         </p>
 
-        <button 
-          onClick={signInWithGoogle}
+        {error && (
+          <div className="w-full mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm text-center">
+            {error}
+          </div>
+        )}
+
+        <button
+          onClick={handleSignIn}
           className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-white text-slate-900 font-semibold rounded-xl hover:bg-slate-100 transition-all active:scale-[0.98] shadow-lg hover:shadow-xl"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">

@@ -6,6 +6,7 @@ import { RouteAnalytics } from './components/RouteAnalytics';
 import Login from './pages/Login';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
+import Connect from './pages/Connect';
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/connect" element={<Connect />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -7,10 +7,10 @@ The one-page answer to "what is true right now, and what do I do next". Read thi
 ## TL;DR
 
 - **Backend** — feature-complete for onboarding (Loop A) and the webhook → Gemini → rename/move pipeline (Loop B). Never yet run end to end against a real Google Drive.
-- **Frontend** — designed UI shell (Login, Onboarding, Dashboard) with **mocked auth and no calls to the backend**. Vercel Analytics is wired; GSAP is installed but unused.
+- **Frontend** — UI shell (Login, Onboarding, Dashboard, `/connect`) now wired to real Supabase auth and the backend API (`VITE_API_URL`). Untested end-to-end since this machine has no real credentials (see ⚠️ 1). Vercel Analytics is wired; GSAP is installed but unused.
 - **Accounts** — Supabase, the Google OAuth client, the Gemini key and Supabase's Google login were set up and live-verified, **but in a different working copy**. This machine doesn't have those secrets (see ⚠️ 1).
 - **Domain** — `drivetag-ai.com` is bought. DNS, Google verification and deployments are not done.
-- **Biggest next task** — make frontend auth real and wire the frontend to the API.
+- **Biggest next task** — get real credentials onto this machine and run the wired-up frontend against a live backend for the first time (never yet verified end to end).
 
 ---
 
@@ -75,10 +75,14 @@ Architecture, design decisions and the API table: [CLAUDE.md](CLAUDE.md).
 
 ### Frontend — `frontend/` (React 19, Vite 8, Tailwind 4, TypeScript)
 
-- Routes: `/` Login, `/onboarding`, `/dashboard` (protected).
-- **Mocked:** `AuthContext.signInWithGoogle` fabricates a user with `access_token: 'dummy-token'`. The backend would reject it with 401.
-- **Mocked:** Onboarding folder choices are hardcoded (`dummy_raw_id`, `dummy_dest_id`) with a `TODO` where the API call belongs.
-- **Not present:** `VITE_API_URL`, any `fetch` to `/api/*`.
+- Routes: `/` Login, `/onboarding`, `/dashboard` (protected), `/connect` (protected) — the landing page the backend's `GET /api/auth/google/callback` redirects to.
+- **Real:** `AuthContext.signInWithGoogle` calls `supabase.auth.signInWithOAuth({ provider: 'google' })`; `signOut` calls `supabase.auth.signOut()`.
+- **Real:** `src/lib/api.ts` — a typed fetch client that reads the current Supabase session and attaches `Authorization: Bearer <token>` to every call, against `VITE_API_URL`.
+- **Real:** Onboarding walks Connect Drive (`POST /api/auth/google/start` → redirect to Google → backend redirects to `/connect` → back to `/onboarding`) → live folder search (`GET /api/drive/folders`) → `POST /api/drive/config` → `POST /api/drive/watch`. Skips ahead if `GET /api/me` shows Drive already connected/configured.
+- **Real:** Dashboard renders from `GET /api/me` and `GET /api/activity`, with a start/stop watch toggle and a setup-incomplete state when Drive isn't connected or folders aren't configured yet.
+- **Not yet built:** a real Google Drive folder *picker* widget — folder selection is a searchable list from `/api/drive/folders` rather than the Google Picker UI. Billing button is still a placeholder (no payment provider integrated anywhere).
+- **Untested:** none of the above has run against a live backend — this machine has blank credentials (⚠️ 1). Verified only via `tsc -b`, `oxlint`, and manual browser checks of routing/redirects with a mocked/placeholder Supabase client.
+- Added `frontend/.env.example` (no secrets) documenting `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_GOOGLE_CLIENT_ID`, `VITE_API_URL`.
 - **Working:** `src/components/RouteAnalytics.tsx` — Vercel Analytics with redirect tracking and OAuth-credential stripping.
 - **Installed, unused:** `gsap` 3.15 and `@gsap/react` 2.1. GSAP agent skills live in `.claude/skills/`.
 
@@ -102,10 +106,10 @@ Details: [frontend/README.md](frontend/README.md).
 
 ## What's next, in priority order
 
-1. **Restore a working local environment** — bring the `.env` files over (⚠️ 1), fix `GEMINI_MODEL` (⚠️ 3), ideally restore the `.env.example` templates (⚠️ 2).
+1. **Restore a working local environment** — bring the `.env` files over (⚠️ 1), fix `GEMINI_MODEL` (⚠️ 3), ideally restore `backend/.env.example` too (⚠️ 2; `frontend/.env.example` is back).
 2. **Security follow-ups** (⚠️ 4).
-3. **Real frontend auth** — replace the dummy `signInWithGoogle` with `supabase.auth.signInWithOAuth({ provider: 'google' })`.
-4. **Wire frontend to API** — `VITE_API_URL`, a helper sending `Authorization: Bearer <supabase token>`, then connect-Drive, folder pickers, watch toggle, dashboard from `/api/me`, activity from `/api/activity`.
+3. **Run the now-wired frontend against a live backend for the first time** — sign-in, Drive connect round trip through `/connect`, folder search, save config, start watch, dashboard/activity — none of it has touched a real Supabase project or backend yet.
+4. **Build a real Google Drive folder picker** — Onboarding currently uses a searchable list from `/api/drive/folders` rather than Google's Picker widget.
 5. **Domain** — work through [domainguide.md](domainguide.md). This unblocks Drive webhook delivery.
 6. **Deploy** — backend to DigitalOcean, frontend to Vercel; enable Vercel Analytics; record the live URLs here.
 7. **First full Drive loop** — [ForDev.md](ForDev.md) §8, ideally with a real photo, not the placeholder.
