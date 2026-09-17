@@ -1,7 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { env } from "../config/env.js";
 
-const ai = new GoogleGenAI({ apiKey: env.gemini.apiKey });
+// Without a timeout a hung call would hold the user's sweep lock (pipeline inFlight) indefinitely.
+const ai = new GoogleGenAI({ apiKey: env.gemini.apiKey, httpOptions: { timeout: 90_000 } });
 
 const SYSTEM_PROMPT = `You are an image-tagging engine for a digital asset management tool.
 Classify the given image and respond with STRICT JSON only, matching this shape:

@@ -18,16 +18,20 @@ DriveTag AI is a B2B micro-SaaS that automatically organizes visual assets for c
 - **Frontend:** React 19 + Vite + Tailwind with real Supabase Google login and every screen backed by the API (`src/lib/api.ts`). Pages: Landing `/`, `/login`, and protected `/onboarding`, `/dashboard`, `/connect`. The whole UI uses a pastel "Lavender garden" design system and GSAP animation throughout. Real sign-in works; the full Drive loop (connect → watch → drop image → renamed) hasn't been run yet.
 - **Credentials:** accounts were set up and live-verified in a *different* working copy. `.env` files are gitignored and don't travel through git, so a given checkout may have blank credentials — `npm run dev` names what's missing. Both `.env.example` templates were deleted in commit `0bdd63d`; [tutorial.md](tutorial.md) lists every variable.
 - **Not built:** the payment-provider webhook (Lemon Squeezy vs Paddle undecided; the subscription gate it feeds exists).
-- **Domain:** `drivetag-ai.com` is purchased but not yet wired — see [domainguide.md](domainguide.md).
+- **Production:** deployed from `production`. The frontend is on Vercel at `drivetag-ai.com`, the backend on DigitalOcean at `api.drivetag-ai.com` (`/health` 200). Login was broken on 2026-09-17 by three missing pieces: the Vercel SPA rewrite, `VITE_API_URL` on Vercel, and the Supabase Site URL/redirect allowlist, which still said `localhost:5173`. The code side is fixed; the dashboard steps are in [domainguide.md](domainguide.md) §2–§7.
 
 Other docs: [task.md](task.md) (scope checklist), [ForDev.md](ForDev.md) (setup runbook + SQL), [tutorial.md](tutorial.md) (per-credential guide). Keep them current when setup changes.
 
 ## Tech Stack & Hosting
 
-- **Frontend:** React 19 + Vite + Tailwind 4 + react-router, TypeScript. Hosted on Vercel (Root Directory: `frontend`). Lint via `oxlint`. Visitor analytics via `@vercel/analytics` in `src/components/RouteAnalytics.tsx`.
+- **Frontend:** React 19 + Vite + Tailwind 4 + react-router, TypeScript. Hosted on Vercel (Root Directory: `frontend`) at `drivetag-ai.com`. Lint via `oxlint`. Visitor analytics via `@vercel/analytics` in `src/components/RouteAnalytics.tsx`.
+  - **Deploy requirements:**
+    - `frontend/vercel.json` rewrites every path to `index.html`; without it every client route 404s on Vercel.
+    - `vite build` refuses to run unless `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and `VITE_API_URL` are set. They're baked in at build time, so changing them on Vercel needs a redeploy.
+    - Supabase auth uses the PKCE flow (`src/lib/supabase.ts`).
   - **Styling:** design tokens live in `src/index.css` `@theme` (`canvas`, `ink`, `lavender`, `periwinkle`, `butter`, `sage`, `rose` + `-soft` tints). Use those rather than raw Tailwind palette colors. Fonts: Fredoka (headings) and Nunito (body).
   - **Animation:** GSAP. Import it from `src/lib/gsap.ts`, which registers plugins once — not from `gsap` directly. Use `useGSAP`, and gate motion behind `gsap.matchMedia()` with `MOTION_OK` / `REDUCED_MOTION`. Project GSAP skills live in `.claude/skills/`.
-- **Backend:** Node.js + Express 5 (ESM). Hosted on DigitalOcean App Platform (Source Directory: `/backend`).
+- **Backend:** Node.js + Express 5 (ESM). Hosted on DigitalOcean App Platform (Source Directory: `/backend`) at `api.drivetag-ai.com`. Must run with `NODE_ENV=production` there, which locks CORS and turns on in-process channel renewal. At boot it logs `"Production config problem"` for any localhost or placeholder URL env var.
 - **Database & Auth:** Supabase (PostgreSQL), project `ckskwjtjydaqewwojsfj` — Google login for identity, plus all app tables.
 - **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON. Default model `gemini-3.6-flash` — Google retired `gemini-2.5-flash` for new users, and a stale `GEMINI_MODEL` in a local `.env` overrides the default.
 - **Google Drive:** `googleapis` SDK.
@@ -64,6 +68,7 @@ backend/
     ├── renew-channels.js      cron entrypoint for channel renewal
     └── get-token.js           mint a Supabase access token for curl testing
 
+frontend/vercel.json           SPA rewrite (all paths → index.html)
 frontend/src/
 ├── App.tsx                    routes: / (Landing), /login, /onboarding + /dashboard + /connect (protected)
 ├── index.css                  Tailwind @theme design tokens
@@ -94,6 +99,19 @@ These were deliberate and are easy to "fix" wrongly:
 - **Drive authorization is a separate OAuth grant from Supabase login.** The pipeline runs while the user is absent, so it needs its own offline refresh token; Supabase does not durably hand one over. `/api/auth/google/*` implements that flow, with a signed+expiring `state` param instead of a session cookie.
 - **Env loading is centralized in `config/env.js`, which calls `dotenv.config()` in its own module body.** ESM hoists imports, so calling `dotenv.config()` in an entrypoint body runs *after* imported modules have already read `process.env`. For the same reason `server.js` validates env and then `await import()`s the app — otherwise Supabase's constructor throws before the readable "you forgot these vars" error.
 - **Idempotency lives in the database.** `processed_files` has `unique (user_id, file_id)`; claiming a file before processing is what makes Drive's duplicate/retried notifications safe. The in-memory `inFlight` set in the pipeline is only a cost optimization, not the correctness guarantee. It is shared by webhook sweeps, polling sweeps and "Organize now", and its `syncing` flag is what the dashboard polls on.
+- **Claims are fenced by `claimed_at`.**
+  - A claim still `processing` after 15 minutes is treated as orphaned by a crash or redeploy. `claimFile` may take it over, and "Retry failed" frees it.
+  - `claimFile` returns the row's `claimed_at` as a token. `processFile` re-checks it before the Drive move (`holdsClaim`).
+  - `recordResult`/`recordFailure` only write while that token still owns the row, so a stalled worker can't overwrite or re-move a file someone else took over.
+  - `/api/activity` reports a stale claim as `failed` ("Interrupted…"), matching `raw-status`.
+  - Every Drive call passes a timeout, and the Gemini client sets `httpOptions.timeout`. Neither SDK has a default, and a hung call would keep that user's sweep "in flight" forever.
+- **Drive watch channels are renewed inside the production server.**
+  - Channels are requested with a 6-day expiration; the default is 1 hour.
+  - `startChannelRenewal` runs hourly. `renewChannel` opens the new channel from the stored `page_token` *before* stopping the old one, so nothing queued is skipped, and a failed renewal leaves the working channel alone.
+  - `stopWatch` deletes by `user_id` first, then stops whichever channel it removed, so a pause can't lose a race with a renewal.
+  - Start, stop, renew and `disconnectDrive` for a user run under a per-user in-process lock, and a channel registered at Google but not recorded is stopped again. Without the lock, a disconnect during a start or renewal leaks a live channel that can no longer be stopped once credentials are gone. This assumes one backend instance.
+  - `disconnectDrive` order matters: stop the channel, revoke at Google (`revokeToken(refreshToken)`; the client holds no access token, so `revokeCredentials` always failed), then delete the stored token.
+  - Renewal and polling-channel conversion only run when `NODE_ENV=production`, because a local backend points at the same Supabase database. Keep `AUTO_SYNC_INTERVAL_SECONDS=0` locally for the same reason.
 - **Polling fallback reuses `drive_channels`.** Google refuses webhook addresses without a public, verified domain (always the case on localhost). When `AUTO_SYNC_INTERVAL_SECONDS > 0`, `startWatch` falls back to storing a channel with `resource_id = 'polling'` and a far-future expiry:
   - `services/autoSync.service.js` runs the normal `processNotification` on those rows each interval, so live and polling modes share one code path.
   - Deleting the row pauses it.
@@ -119,7 +137,7 @@ npm install                    # install dependencies
 npm run dev                    # start with nodemon (auto-reload)
 npm start                      # start without auto-reload
 npm run test:gemini [path]     # classify a local image, print tags + target filename
-npm run renew:channels         # renew expiring Drive watch channels (run hourly in prod)
+npm run renew:channels         # renew expiring Drive watch channels now (production also does this hourly in-process)
 npm run token -- <email> <pw>  # mint a Supabase access token for curling the authed routes
 ```
 

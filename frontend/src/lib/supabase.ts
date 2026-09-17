@@ -4,16 +4,16 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase credentials are missing. Please add them to your .env.local file.');
+  console.error(
+    'VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are missing. Add them to frontend/.env (or the hosting environment) and rebuild.',
+  );
 }
 
-let validUrl = supabaseUrl;
-if (!validUrl || !validUrl.startsWith('http')) {
-  validUrl = 'https://placeholder.supabase.co';
-}
-
-// Create a single supabase client for interacting with your database
 export const supabase = createClient(
-  validUrl,
-  supabaseAnonKey || 'placeholder'
+  // Placeholders only keep `npm run dev` from crashing; production builds refuse to run without real values (vite.config.ts).
+  supabaseUrl?.startsWith('http') ? supabaseUrl : 'https://placeholder.supabase.co',
+  supabaseAnonKey || 'placeholder',
+  // PKCE: if a sign-in is ever redirected to the wrong address, it carries a one-time code bound to this
+  // browser instead of a live access/refresh token in the URL.
+  { auth: { flowType: 'pkce' } },
 );

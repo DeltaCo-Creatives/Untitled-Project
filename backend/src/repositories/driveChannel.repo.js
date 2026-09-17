@@ -48,9 +48,37 @@ export async function updatePageToken(channelId, pageToken) {
   if (error) throw new Error(`Failed to advance page token: ${error.message}`);
 }
 
-export async function deleteChannel(channelId) {
-  const { error } = await supabase.from("drive_channels").delete().eq("channel_id", channelId);
+/**
+ * Points a user's channel row at a newly opened channel, keeping its page_token.
+ * Returns null if the row is gone (the user paused, or another renewal won).
+ */
+export async function replaceChannel(oldChannelId, { channelId, resourceId, expiresAt }) {
+  const { data, error } = await supabase
+    .from("drive_channels")
+    .update({ channel_id: channelId, resource_id: resourceId, expires_at: expiresAt })
+    .eq("channel_id", oldChannelId)
+    .select()
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to replace Drive channel: ${error.message}`);
+  return data;
+}
+
+/**
+ * Removes the user's channel row and returns the row actually deleted, or null.
+ * Keyed by user rather than channel id so a renewal swapping the channel id
+ * mid-pause can't leave the renewed channel behind.
+ */
+export async function deleteChannelForUser(userId) {
+  const { data, error } = await supabase
+    .from("drive_channels")
+    .delete()
+    .eq("user_id", userId)
+    .select()
+    .maybeSingle();
+
   if (error) throw new Error(`Failed to delete Drive channel: ${error.message}`);
+  return data;
 }
 
 /**

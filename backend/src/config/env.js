@@ -74,6 +74,33 @@ export const env = {
   },
 };
 
+const LOCAL_ADDRESS = /localhost|127\.0\.0\.1/;
+
+/**
+ * Values that work locally but break a deployed app. They don't stop the
+ * server (it can still serve health checks); server.js logs each one at boot.
+ */
+export function productionConfigProblems() {
+  if (env.nodeEnv !== "production") return [];
+
+  const problems = [];
+  if (LOCAL_ADDRESS.test(env.frontend.url)) {
+    problems.push(`FRONTEND_URL is ${env.frontend.url}; failed Drive connections will send users there.`);
+  }
+  if (env.frontend.corsOrigins.every((origin) => LOCAL_ADDRESS.test(origin))) {
+    problems.push(
+      `CORS_ORIGINS (${env.frontend.corsOrigins.join(", ")}) has no public origin, so the live site's API calls are refused.`,
+    );
+  }
+  if (LOCAL_ADDRESS.test(env.google.oauthRedirectUri)) {
+    problems.push(`GOOGLE_OAUTH_REDIRECT_URI is ${env.google.oauthRedirectUri}; Drive consent will return to a local address.`);
+  }
+  if (LOCAL_ADDRESS.test(env.google.webhookUrl) || /ngrok|your-subdomain/.test(env.google.webhookUrl)) {
+    problems.push(`DRIVE_WEBHOOK_URL is ${env.google.webhookUrl}; Google can't deliver Drive notifications there.`);
+  }
+  return problems;
+}
+
 /**
  * Called by entrypoints that need the whole config (the server, the renewal
  * job). Deliberately not run at import time so a focused script — say
@@ -83,7 +110,7 @@ export function assertRequiredEnv() {
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}\n` +
-        "Copy backend/.env.example to backend/.env and fill them in (see ForDev.md).",
+        "Add them to backend/.env (every variable is listed in tutorial.md).",
     );
   }
 }

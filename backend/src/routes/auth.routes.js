@@ -3,15 +3,10 @@ import { env } from "../config/env.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { signState, verifyState } from "../utils/crypto.js";
 import { isAllowedFrontendOrigin } from "../utils/origins.js";
-import {
-  buildConsentUrl,
-  exchangeCode,
-  DRIVE_SCOPES,
-  revokeAccess,
-} from "../services/googleAuth.service.js";
-import { saveRefreshToken, deleteCredentials } from "../repositories/credentials.repo.js";
+import { buildConsentUrl, exchangeCode, DRIVE_SCOPES } from "../services/googleAuth.service.js";
+import { saveRefreshToken } from "../repositories/credentials.repo.js";
 import { startTrialIfNew } from "../repositories/subscription.repo.js";
-import { stopWatch } from "../services/driveWatch.service.js";
+import { disconnectDrive } from "../services/driveWatch.service.js";
 import { logger } from "../utils/logger.js";
 
 const router = Router();
@@ -64,16 +59,7 @@ router.get("/google/callback", async (req, res) => {
 });
 
 router.delete("/google", requireAuth, async (req, res) => {
-  await stopWatch(req.user.id);
-  try {
-    await revokeAccess(req.user.id);
-  } catch (err) {
-    logger.warn("Token revocation failed, deleting locally anyway", {
-      userId: req.user.id,
-      reason: err.message,
-    });
-  }
-  await deleteCredentials(req.user.id);
+  await disconnectDrive(req.user.id);
   res.json({ disconnected: true });
 });
 

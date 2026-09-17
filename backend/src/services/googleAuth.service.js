@@ -48,7 +48,13 @@ export async function getAuthedClient(userId) {
   return client;
 }
 
+/**
+ * Revokes the stored grant at Google. Revoking the refresh token revokes the
+ * whole grant; client.revokeCredentials() only works on an access token, which
+ * a client hydrated from a refresh token doesn't hold, so it always threw.
+ */
 export async function revokeAccess(userId) {
-  const client = await getAuthedClient(userId);
-  await client.revokeCredentials();
+  const refreshToken = await getRefreshToken(userId);
+  if (!refreshToken) return;
+  await newOAuthClient().revokeToken(refreshToken);
 }

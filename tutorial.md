@@ -196,12 +196,14 @@ The frontend reads its own file — `frontend/.env` (gitignored; `.env.local` al
 ```
 VITE_SUPABASE_URL=https://ckskwjtjydaqewwojsfj.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon key from §3>
-VITE_GOOGLE_CLIENT_ID=<client ID from §2>
+VITE_API_URL=http://localhost:3001
 ```
 
-All three are public — they're compiled into the JavaScript bundle. That's expected and fine. The **service_role key must never appear here.**
-
-You'll also need `VITE_API_URL` (e.g. `http://localhost:3001`) once the frontend starts calling the backend — it doesn't yet.
+- **All of these are public.** They're compiled into the JavaScript bundle, which is expected and fine. The **service_role key must never appear here.**
+- **`VITE_API_URL`** is the backend base URL, with no trailing slash. Locally it's `http://localhost:3001`; on Vercel it's `https://api.drivetag-ai.com` ([domainguide.md](domainguide.md) §2b).
+- **Builds fail without them.** `npm run build` stops with "Missing VITE_… for this build" if any of the three is missing. That's deliberate: a Vercel build once shipped `localhost:3001` as the API address. `npm run dev` still falls back to `localhost:3001`.
+- **Changing a value on Vercel needs a redeploy.** Values are baked in at build time.
+- **`VITE_GOOGLE_CLIENT_ID` isn't read by the frontend.** Google sign-in goes through Supabase's provider config, so an old `.env` can drop it.
 
 ---
 

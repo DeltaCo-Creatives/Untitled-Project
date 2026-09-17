@@ -17,6 +17,9 @@ export function createApp() {
 
   app.set("trust proxy", 1); // behind DigitalOcean App Platform's load balancer
   app.use(cors({ origin: corsOrigin }));
+  // cors() answers preflights from allowed origins. A refused origin would otherwise fall
+  // through to requireAuth and get a misleading 401 "Missing bearer token".
+  app.use((req, res, next) => (req.method === "OPTIONS" ? res.sendStatus(204) : next()));
   app.use(express.json());
 
   app.get("/health", (req, res) => res.json({ status: "ok" }));

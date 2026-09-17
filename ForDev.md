@@ -441,22 +441,29 @@ Set this up before you have real users — it is the most likely cause of "it ju
 **Backend → DigitalOcean App Platform**
 - Connect the GitHub repo, set **Source Directory** to `/backend`
 - Build command `npm ci`, run command `npm start`
-- Set every backend variable (listed in [tutorial.md](tutorial.md)) as encrypted app-level env vars
-- Update `GOOGLE_OAUTH_REDIRECT_URI` and `DRIVE_WEBHOOK_URL` to the production domain, and add the new redirect URI to the Google OAuth client — the exact values for `api.drivetag-ai.com` are in [domainguide.md](domainguide.md) §5–§6
-- Existing watch channels still point at the old (ngrok) URL — re-register them after cutover
+- Set every backend variable (listed in [tutorial.md](tutorial.md)) as encrypted app-level env vars, including `NODE_ENV=production`. That locks CORS to `CORS_ORIGINS` and turns on in-process channel renewal.
+- Set `GOOGLE_OAUTH_REDIRECT_URI`, `DRIVE_WEBHOOK_URL`, `FRONTEND_URL` and `CORS_ORIGINS` to production values, and add the new redirect URI to the Google OAuth client. The exact values for `api.drivetag-ai.com` are in [domainguide.md](domainguide.md) §5–§6.
+- At boot the backend logs `"Production config problem"` for any of those still pointing at `localhost` or the ngrok placeholder. Check the runtime logs after every deploy.
+- Existing watch channels still point at the old (ngrok) URL. Re-register them after cutover.
 
 **Frontend → Vercel**
 - Connect the same repo, **Root Directory** `frontend`
 - Framework preset Vite; build `npm run build`; output `dist`
+- `frontend/vercel.json` rewrites every path to `index.html`. Without it, `/login`, `/dashboard` and the post-sign-in redirect all return Vercel's 404.
 - Environment variables (all `VITE_*` values are public — they ship to the browser, so never put the service_role key here):
   ```
   VITE_SUPABASE_URL=https://ckskwjtjydaqewwojsfj.supabase.co
   VITE_SUPABASE_ANON_KEY=<anon key>
-  VITE_GOOGLE_CLIENT_ID=<same client id>
+  VITE_API_URL=https://api.drivetag-ai.com
   ```
+  They're baked in at build time. Redeploy with the build cache off after changing any of them. A build missing one fails with "Missing VITE_… for this build".
 - Enable **Analytics** in the Vercel project (Analytics tab → Enable), then redeploy. The package is already installed and wired; data only appears on Vercel deployments, never on localhost, where it just logs to the console.
-- Then, back on the backend: set `CORS_ORIGINS` and `FRONTEND_URL` to the Vercel domain
-- And in Supabase → **Authentication → URL Configuration**: add the Vercel URL to Site URL / Redirect URLs
+- Then, back on the backend: set `CORS_ORIGINS` and `FRONTEND_URL` to `https://drivetag-ai.com`.
+- In Supabase → **Authentication → URL Configuration**:
+  - set Site URL to `https://drivetag-ai.com`;
+  - add `https://drivetag-ai.com/**` to Redirect URLs.
+  
+  Unlisted addresses silently fall back to the Site URL, which is how production sign-ins ended up at `localhost:5173` ([domainguide.md](domainguide.md) §7).
 
 ---
 

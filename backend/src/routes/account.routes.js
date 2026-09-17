@@ -6,7 +6,7 @@ import { getChannelForUser, isPollingChannel } from "../repositories/driveChanne
 import { serializeFolderConfig } from "../utils/serialize.js";
 import { getSubscription, isEntitled } from "../repositories/subscription.repo.js";
 import { getRefreshToken } from "../repositories/credentials.repo.js";
-import { listRecent } from "../repositories/processedFile.repo.js";
+import { isStaleClaim, listRecent } from "../repositories/processedFile.repo.js";
 
 const router = Router();
 
@@ -47,7 +47,18 @@ router.get("/me", async (req, res) => {
 /** Tag/rename history — metadata only, no image data is ever stored. */
 router.get("/activity", async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 50, 200);
-  res.json({ activity: await listRecent(req.user.id, limit) });
+  const now = Date.now();
+  // An orphaned claim would otherwise show as "Processing" forever; raw-status already counts it as failed.
+  const activity = (await listRecent(req.user.id, limit)).map(({ claimed_at: claimedAt, ...row }) =>
+    isStaleClaim({ ...row, claimed_at: claimedAt }, now)
+      ? {
+          ...row,
+          status: "failed",
+          error_message: "Interrupted while processing (the server restarted). If it's still in your Raw folder, use Retry.",
+        }
+      : row,
+  );
+  res.json({ activity });
 });
 
 export default router;

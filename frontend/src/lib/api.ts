@@ -1,6 +1,10 @@
 import { supabase } from './supabase';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// The localhost fallback is for `npm run dev` only; production builds must be given VITE_API_URL.
+const API_URL = (import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '')).replace(
+  /\/+$/,
+  '',
+);
 
 export interface DriveFolder {
   id: string;
@@ -67,6 +71,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (!API_URL) {
+    throw new ApiError('This build of DriveTag has no API address (VITE_API_URL). Set it on the host and rebuild.', 0);
+  }
+
   const {
     data: { session },
   } = await supabase.auth.getSession();

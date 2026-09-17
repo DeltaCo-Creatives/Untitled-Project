@@ -1,6 +1,25 @@
 # domainguide.md — Wiring up drivetag-ai.com
 
-> **Status (2026-09-16): not started.** Every checklist item below is open. The live DigitalOcean and Vercel URLs haven't been recorded, so it's unconfirmed whether the initial deploys this guide assumes exist yet. Fill them in below once known, and update [Handover.md](Handover.md).
+> **Status (2026-09-17): deployed, but production login is broken until §2–§7 are finished.** Verified from outside:
+>
+> **Frontend (Vercel)**
+> - `https://drivetag-ai.com/` serves the latest build.
+> - Every client route (`/login`, `/dashboard`, `/connect`) returns Vercel's 404, because the SPA rewrite was missing. It's fixed in the repo as `frontend/vercel.json` and needs a redeploy.
+> - The build had no `VITE_API_URL`, so the live site calls `http://localhost:3001`.
+>
+> **Backend (DigitalOcean)**
+> - `https://api.drivetag-ai.com/health` is up.
+> - `CORS_ORIGINS` and `FRONTEND_URL` still hold `localhost` values.
+>
+> **Supabase**
+> - The Site URL is still `http://localhost:5173`.
+> - `https://drivetag-ai.com` isn't allowlisted, so after Google sign-in users are sent to `localhost:5173`.
+>
+> **DNS**
+> - `drivetag-ai.com` and `www` point at a Namecheap host (159.198.67.67), not directly at Vercel.
+> - `www` shows a Namecheap parking page.
+>
+> Update [Handover.md](Handover.md) as items are finished.
 
 You bought `drivetag-ai.com` on Namecheap (plus SSL, DNS, and domain privacy add-ons). This is the walkthrough for pointing it at your live backend (DigitalOcean) and frontend (Vercel), verifying it with Google, and updating every env var that currently still says `localhost` or a placeholder ngrok URL.
 
@@ -43,8 +62,31 @@ All the records below go in the same place: **Advanced DNS** tab on that same Ma
 
 1. Vercel → your project → **Settings → Domains → Add** → enter `drivetag-ai.com` (add `www.drivetag-ai.com` too if you want it).
 2. Vercel displays the exact record(s) to add — usually an **A record** (`@` → `76.76.21.21`) for the apex domain and/or a **CNAME** (`www` → `cname.vercel-dns.com`). Copy exactly what Vercel shows you; it can change, don't reuse a value from memory or a tutorial.
-3. Namecheap → Advanced DNS → **Add New Record** → enter what Vercel gave you.
+3. Namecheap → Advanced DNS: **replace** the existing `@` and `www` records with what Vercel gave you.
+   - As of 2026-09-17 both resolve to `159.198.67.67`, a Namecheap host. It fronts the site with its own certificate and serves a parking page on `www`.
+   - Delete those records, plus any Namecheap "URL Redirect" / parking records for `@` or `www`.
+   - **Do not touch** the `api` CNAME (→ `drivetag-ai-geirr.ondigitalocean.app`), the MX records (`eforward*.registrar-servers.com`), or the SPF TXT record.
 4. Wait for DNS to propagate (minutes to a few hours). Vercel's dashboard flips to a green checkmark and issues SSL automatically once it sees the record resolve.
+
+**Check:** run `nslookup drivetag-ai.com 8.8.8.8`. It should return Vercel's IP, and `curl -sI https://www.drivetag-ai.com/` should redirect to `https://drivetag-ai.com/`.
+
+### 2b. Vercel project settings — both are required, or login breaks
+
+**The SPA rewrite.** `frontend/vercel.json` rewrites every path to `/index.html`, so `/login`, `/dashboard` and `/connect` load the app instead of returning Vercel's 404. It lives in `frontend/` because the project's Root Directory is `frontend`. Real files like `/assets/*` are still served first.
+
+**Environment variables.** Vercel → Project → **Settings → Environment Variables**, for **Production** (and Preview, if you use preview deployments):
+
+| Variable | Value |
+|---|---|
+| `VITE_SUPABASE_URL` | `https://ckskwjtjydaqewwojsfj.supabase.co` |
+| `VITE_SUPABASE_ANON_KEY` | the anon key (public) |
+| `VITE_API_URL` | `https://api.drivetag-ai.com` (no trailing slash) |
+
+`VITE_*` values are compiled into the JavaScript at build time. Changing them in Vercel does nothing until you **redeploy**; turn off "Use existing build cache". A build missing any of the three now fails on purpose with "Missing VITE_… for this build". A Vercel build whose `VITE_API_URL` points at `localhost` or `127.0.0.1` fails too, so it can't silently ship `localhost` again.
+
+**Check after the redeploy:**
+- `curl -sI https://drivetag-ai.com/login` returns `200`, with no `X-Vercel-Error`.
+- The JS bundle linked from `https://drivetag-ai.com/` contains `api.drivetag-ai.com`, not `localhost:3001`.
 
 ---
 
@@ -89,8 +131,18 @@ https://api.drivetag-ai.com/api/auth/google/callback
 | `DRIVE_WEBHOOK_URL` | `https://api.drivetag-ai.com/webhook/drive` |
 | `FRONTEND_URL` | `https://drivetag-ai.com` |
 | `CORS_ORIGINS` | `https://drivetag-ai.com` (comma-separate if you also serve `www`) |
+| `NODE_ENV` | `production`. It locks CORS to `CORS_ORIGINS` and turns on channel renewal. Verified already set |
+| `AUTO_SYNC_INTERVAL_SECONDS` | `60` until Google accepts the webhook, then optionally `0` (see the note below) |
 
-These currently still hold `localhost` values / the ngrok placeholder from initial deploy — that was expected at the time, this is the step that fixes it.
+Verified on 2026-09-17: `FRONTEND_URL` and `CORS_ORIGINS` still hold `localhost` values. `GOOGLE_OAUTH_REDIRECT_URI` and `DRIVE_WEBHOOK_URL` can't be seen from outside, so check them.
+
+The production backend now logs a `"Production config problem"` error at boot for any of these that still points at `localhost` or the ngrok placeholder. After redeploying, search DigitalOcean's runtime logs for that message. It should be gone.
+
+In production the backend also renews Drive watch channels by itself every hour, so no external cron is needed. If `AUTO_SYNC_INTERVAL_SECONDS` is `0`, it tries to upgrade any polling-mode channels to live webhooks at boot.
+
+**Check after the redeploy:**
+- An `OPTIONS` preflight to `https://api.drivetag-ai.com/api/me` with `Origin: https://drivetag-ai.com` returns `access-control-allow-origin: https://drivetag-ai.com`.
+- `curl -sI "https://api.drivetag-ai.com/api/auth/google/callback?code=x&state=bad"` redirects to `https://drivetag-ai.com/connect?error=invalid_state`.
 
 ---
 
@@ -100,7 +152,18 @@ Supabase dashboard → **Authentication → URL Configuration**:
 - **Site URL** → `https://drivetag-ai.com`
 - **Redirect URLs** → add `https://drivetag-ai.com/**`
 
-(Leave the `localhost:5173` entry too, so local dev logins keep working.)
+Keep `http://localhost:5173/**` so local dev logins keep working, and add `http://localhost:4173/**` if you use the production preview.
+
+**Why this caused "localhost:5173 refused to connect" after Google sign-in:**
+- If the page's address isn't on this allowlist, Supabase silently ignores it and sends the finished sign-in to the **Site URL** instead.
+- The path is dropped too, which is why users landed on `localhost:5173/` rather than `/dashboard`.
+- Google Cloud test users had nothing to do with it: getting a token back means Google sign-in succeeded.
+
+**Do §2b first, or at the same time.** A correct Supabase setting sends users to `https://drivetag-ai.com/dashboard?code=…`, and that 404s until the Vercel rewrite is deployed.
+
+**Check:** run `curl -sI "https://ckskwjtjydaqewwojsfj.supabase.co/auth/v1/verify?type=signup&token=x&redirect_to=https%3A%2F%2Fdrivetag-ai.com%2Fdashboard"`. The `location` header must start with `https://drivetag-ai.com/dashboard`, not `http://localhost:5173`.
+
+After everything works, sign in again in a fresh tab on `https://drivetag-ai.com`. A session from the misrouted attempt lived on `localhost:5173` and doesn't carry over.
 
 ---
 
@@ -169,7 +232,8 @@ Then submit for **brand verification**. Google says it takes a few business days
 ## Checklist
 
 - [ ] Confirmed Namecheap nameservers + domain privacy (§1)
-- [ ] Vercel domain added, DNS record added, SSL live (§2)
+- [ ] Vercel domain added; `@` and `www` records replaced with Vercel's (keep `api`, MX, SPF); SSL live (§2)
+- [ ] `frontend/vercel.json` deployed; `VITE_API_URL=https://api.drivetag-ai.com` plus both Supabase vars set on Vercel; redeployed without the build cache (§2b)
 - [ ] DigitalOcean domain added, DNS record added, SSL live (§3)
 - [ ] Domain verified in Search Console (§4)
 - [ ] Domain verified in Cloud Console → Domain verification (§4)

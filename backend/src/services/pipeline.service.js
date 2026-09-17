@@ -57,8 +57,8 @@ function isCandidate(file, rawFolderId) {
 }
 
 async function processFile(userId, file, config) {
-  const claimed = await processed.claimFile(userId, file.id, file.name);
-  if (!claimed) return "skipped";
+  const claim = await processed.claimFile(userId, file.id, file.name);
+  if (!claim) return "skipped";
 
   try {
     if (Number(file.size) > env.gemini.maxImageBytes) {
@@ -70,17 +70,28 @@ async function processFile(userId, file, config) {
     const tags = await classifyImage(buffer, file.mimeType);
 
     const newName = buildFileName(tags, file.name, file.mimeType);
+
+    // A run slow enough to be declared stale may have been taken over; the new owner moves the file.
+    if (!(await processed.holdsClaim(userId, file.id, claim))) {
+      logger.warn("Claim taken over before rename; leaving the file to its new owner", { userId, fileId: file.id });
+      return "skipped";
+    }
+
     await renameAndMove(userId, file.id, {
       name: newName,
       addParent: config.destination_folder_id,
       removeParent: config.raw_folder_id,
     });
 
-    await processed.recordResult(userId, file.id, { newName, tags });
+    if (!(await processed.recordResult(userId, file.id, claim, { newName, tags }))) {
+      logger.warn("Claim lost before recording the result", { userId, fileId: file.id, newName });
+    }
     logger.info("File tagged and moved", { userId, fileId: file.id, newName, tags });
     return "completed";
   } catch (err) {
-    await processed.recordFailure(userId, file.id, err.message);
+    if (!(await processed.recordFailure(userId, file.id, claim, err.message))) {
+      logger.warn("Claim lost before recording the failure", { userId, fileId: file.id });
+    }
     logger.error("File processing failed", { userId, fileId: file.id, reason: err.message });
     return "failed";
   }
@@ -152,11 +163,13 @@ export async function getRawFolderStatus(userId, config) {
   const statuses = await processed.getStatuses(userId, files.map((file) => file.id));
 
   const counts = { waiting: 0, processing: 0, failed: 0 };
+  const now = Date.now();
   for (const file of files) {
-    const status = statuses.get(file.id);
-    if (!status) counts.waiting += 1;
-    else if (status === "processing") counts.processing += 1;
-    else if (status === "failed") counts.failed += 1;
+    const row = statuses.get(file.id);
+    if (!row) counts.waiting += 1;
+    // An orphaned claim is effectively failed: "Retry" frees it (processed.releaseFailed).
+    else if (row.status === "failed" || processed.isStaleClaim(row, now)) counts.failed += 1;
+    else if (row.status === "processing") counts.processing += 1;
     // A "completed" file still listed here is mid-move out of Raw.
   }
 
