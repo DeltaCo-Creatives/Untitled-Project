@@ -1,14 +1,14 @@
 import { useId, useRef, useState } from 'react';
-import { Check, CircleAlert, FolderCheck, ImageUp, LoaderCircle } from 'lucide-react';
-import type { ActivityEntry, WorkProcess } from '../../lib/api';
+import { Check, CircleAlert, FileText, FolderCheck, Image as ImageIcon, ImageUp, LoaderCircle } from 'lucide-react';
+import type { ActivityEntry, ProcessKind, WorkProcess } from '../../lib/api';
 import { gsap, useGSAP, MOTION_OK } from '../../lib/gsap';
-import { displayTag } from '../../lib/messages';
+import { displayTag, kindArticleWord, kindWord } from '../../lib/messages';
 import { formatCount, timeAgo } from '../../lib/format';
 
 interface ActivityListProps {
   activity: ActivityEntry[];
   processes: WorkProcess[];
-  /** Images are being sorted right now; the list refreshes every few seconds. */
+  /** Files are being sorted right now; the list refreshes every few seconds. */
   live: boolean;
   className?: string;
 }
@@ -23,20 +23,32 @@ const STATUS_STYLES: Record<ActivityEntry['status'], { bubble: string; label: st
   failed: { bubble: 'bg-rose', label: 'Failed' },
 };
 
-const TAG_TINTS = ['bg-lavender-soft', 'bg-butter-soft', 'bg-sage-soft'];
+const TAG_TINTS = ['bg-lavender-soft', 'bg-butter-soft', 'bg-sage-soft', 'bg-periwinkle-soft'];
 
 const chipBase =
   'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60';
+
+const KIND_FILTERS: { id: 'all' | ProcessKind; label: string }[] = [
+  { id: 'all', label: 'All kinds' },
+  { id: 'image', label: 'Images' },
+  { id: 'document', label: 'Documents' },
+];
 
 export function ActivityList({ activity, processes, live, className = '' }: ActivityListProps) {
   const ref = useRef<HTMLElement>(null);
   const selectId = useId();
   const seenFileIds = useRef<Set<string> | null>(null);
   const [filter, setFilter] = useState<string>(ALL);
+  const [kindFilter, setKindFilter] = useState<'all' | ProcessKind>('all');
 
   // A process deleted since it was picked falls back to showing everything.
   const activeFilter = filter !== ALL && processes.some((process) => process.id === filter) ? filter : ALL;
-  const rows = activeFilter === ALL ? activity : activity.filter((entry) => entry.process_id === activeFilter);
+  // Only worth showing once the account actually mixes kinds — a single-kind account gains nothing from it.
+  const showKindFilter = activity.some((entry) => (entry.kind ?? 'image') === 'image') && activity.some((entry) => entry.kind === 'document');
+  const activeKindFilter = showKindFilter ? kindFilter : 'all';
+  const rows = activity
+    .filter((entry) => activeFilter === ALL || entry.process_id === activeFilter)
+    .filter((entry) => activeKindFilter === 'all' || (entry.kind ?? 'image') === activeKindFilter);
   const names = new Map(processes.map((process) => [process.id, process.name]));
   const showFilter = processes.length > 1;
   const perProcess = new Map<string, number>();
@@ -44,7 +56,6 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
     if (entry.process_id) perProcess.set(entry.process_id, (perProcess.get(entry.process_id) ?? 0) + 1);
   }
   const idsKey = activity.map((entry) => entry.file_id).join('|');
-  const lastFilter = useRef(activeFilter);
   const entrance = useRef<gsap.core.Tween | null>(null);
 
   // Entrance: rows slide in once, after the page's cards.
@@ -105,11 +116,13 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
   );
 
   // Switching the filter gives the new set of rows a quick settle-in (not on first render).
+  const filterKey = `${activeFilter}|${activeKindFilter}`;
+  const lastFilterKey = useRef(filterKey);
   useGSAP(
     () => {
       if (!ref.current) return;
-      if (lastFilter.current === activeFilter) return;
-      lastFilter.current = activeFilter;
+      if (lastFilterKey.current === filterKey) return;
+      lastFilterKey.current = filterKey;
       // Rows still mid-entrance would otherwise fade in twice.
       entrance.current?.progress(1);
       const mm = gsap.matchMedia();
@@ -126,10 +139,11 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
       });
       return () => mm.revert();
     },
-    { dependencies: [activeFilter], scope: ref, revertOnUpdate: true },
+    { dependencies: [filterKey], scope: ref, revertOnUpdate: true },
   );
 
   const filterName = activeFilter === ALL ? null : names.get(activeFilter);
+  const filterProcess = activeFilter === ALL ? null : processes.find((process) => process.id === activeFilter);
   const onlyProcess = processes.length === 1 ? processes[0] : null;
 
   return (
@@ -201,6 +215,25 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
           </div>
         ))}
 
+      {showKindFilter && (
+        <div role="group" aria-label="Show activity of kind" className="mb-4 flex flex-wrap gap-2">
+          {KIND_FILTERS.map((option) => {
+            const selected = option.id === activeKindFilter;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setKindFilter(option.id)}
+                className={`${chipBase} ${selected ? 'bg-periwinkle text-ink shadow-soft' : 'bg-periwinkle-soft text-ink-soft hover:text-ink'}`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {rows.length === 0 ? (
         <div className="activity-empty flex flex-col items-center py-10 text-center">
           <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-lavender-soft" aria-hidden>
@@ -211,7 +244,8 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
               {/* Filtering is client-side over the latest rows, so older files may exist: don't say "yet". */}
               <h3 className="mb-2 text-xl font-semibold">No recent files from “{filterName}”</h3>
               <p className="max-w-sm leading-relaxed text-ink-soft">
-                Images this process sorts show up here — tagged, renamed, and filed.
+                {filterProcess?.kind === 'document' ? 'Documents' : 'Images'} this process sorts show up here — tagged,
+                renamed, and filed.
               </p>
             </>
           ) : (
@@ -220,13 +254,13 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
               <p className="max-w-sm leading-relaxed text-ink-soft">
                 {onlyProcess?.rawFolderName ? (
                   <>
-                    Drop an image into <strong className="text-ink">{onlyProcess.rawFolderName}</strong> and it’ll show up
-                    here — tagged, renamed, and filed.
+                    Drop {kindArticleWord(onlyProcess.kind)} into <strong className="text-ink">{onlyProcess.rawFolderName}</strong> and
+                    it’ll show up here — tagged, renamed, and filed.
                   </>
                 ) : processes.length === 0 ? (
-                  'Create a work process, drop an image into its Raw folder, and it’ll show up here — tagged, renamed, and filed.'
+                  'Create a work process, drop a file into its Raw folder, and it’ll show up here — tagged, renamed, and filed.'
                 ) : (
-                  'Drop an image into one of your Raw folders and it’ll show up here — tagged, renamed, and filed.'
+                  'Drop a file into one of your Raw folders and it’ll show up here — tagged, renamed, and filed.'
                 )}
               </p>
             </>
@@ -236,10 +270,20 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
         <ul className="divide-y divide-line">
           {rows.map((entry) => {
             const style = STATUS_STYLES[entry.status];
-            const tags = [entry.tags?.genre, entry.tags?.subject, entry.tags?.style].filter(Boolean) as string[];
+            const entryKind: ProcessKind = entry.kind ?? 'image';
+            const tags =
+              entryKind === 'document'
+                ? ([
+                    entry.tags?.type && displayTag(entry.tags.type),
+                    entry.tags?.topic && displayTag(entry.tags.topic),
+                    entry.tags?.organization && displayTag(entry.tags.organization),
+                    entry.tags?.document_date,
+                  ].filter(Boolean) as string[])
+                : [entry.tags?.genre, entry.tags?.subject, entry.tags?.style].filter((v): v is string => Boolean(v)).map(displayTag);
             const fields = (entry.tags?.fields ?? []).filter((field) => field.value?.trim());
             const processName = activeFilter === ALL && processes.length > 1 && entry.process_id ? names.get(entry.process_id) : null;
             const hasChips = Boolean(entry.destination_name) || tags.length > 0 || fields.length > 0;
+            const KindIcon = entryKind === 'document' ? FileText : ImageIcon;
             return (
               <li
                 key={entry.file_id}
@@ -258,8 +302,10 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
                     <span className="sr-only">{style.label}</span>
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-bold" title={entry.new_name ?? entry.original_name ?? undefined}>
-                      {entry.new_name ?? entry.original_name ?? entry.file_id}
+                    <p className="flex min-w-0 items-center gap-1.5 font-bold" title={entry.new_name ?? entry.original_name ?? undefined}>
+                      <KindIcon aria-hidden className="h-3.5 w-3.5 shrink-0 text-ink-soft" />
+                      <span className="sr-only">{kindWord(entryKind, 1)}: </span>
+                      <span className="min-w-0 truncate">{entry.new_name ?? entry.original_name ?? entry.file_id}</span>
                     </p>
                     {entry.status === 'failed' && entry.error_message ? (
                       <p className="line-clamp-2 text-sm font-semibold text-rose-ink">{entry.error_message}</p>
@@ -287,8 +333,8 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
                       </li>
                     )}
                     {tags.map((tag, i) => (
-                      <li key={`${tag}-${i}`} className={`max-w-full truncate rounded-full px-2.5 py-0.5 text-xs font-bold ${TAG_TINTS[i]}`}>
-                        {displayTag(tag)}
+                      <li key={`${tag}-${i}`} className={`max-w-full truncate rounded-full px-2.5 py-0.5 text-xs font-bold ${TAG_TINTS[i % TAG_TINTS.length]}`}>
+                        {tag}
                       </li>
                     ))}
                     {fields.map((field, i) => (

@@ -1,13 +1,15 @@
 import { useRef } from 'react';
-import { Dog, Lock } from 'lucide-react';
+import { Dog, FileText, Lock } from 'lucide-react';
 import { gsap, useGSAP, ScrollTrigger, MOTION_OK, REDUCED_MOTION } from '../lib/gsap';
 
 const COLS = 6;
 const ROWS = 4;
 const PARTICLE_COLORS = ['bg-lavender', 'bg-periwinkle', 'bg-butter', 'bg-sage', 'bg-rose'];
-const STATUSES = ['Tagging in memory…', 'Renamed & moved in your Drive', 'Image discarded — nothing kept'];
+const STATUSES = ['Tagging in memory…', 'Renamed & moved in your Drive', 'File discarded — nothing kept'];
+const IMAGE_TAGS = ['pet', 'golden retriever', 'beach'];
+const DOCUMENT_TAGS = ['invoice', 'acme', 'q3 hosting'];
 
-/** Shows an image being tagged, then dissolving: the pixels never land anywhere. */
+/** Shows a file being tagged, then dissolving: the bytes never land anywhere. Alternates image / document each loop. */
 export function MemoryDemo() {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -22,9 +24,25 @@ export function MemoryDemo() {
 
       mm.add(MOTION_OK, () => {
         const particles = gsap.utils.toArray<HTMLElement>('.particle', root);
+        const tagEls = gsap.utils.toArray<HTMLElement>('.memory-tag', root);
+        let kind: 'image' | 'document' = 'image';
+        // Runs at the top of every loop: swaps which icon shows and what the tag chips say, so the demo
+        // alternates between an image and a document without rebuilding the timeline.
+        const applyKind = () => {
+          gsap.set('.memory-icon-image', { autoAlpha: kind === 'image' ? 1 : 0 });
+          gsap.set('.memory-icon-document', { autoAlpha: kind === 'document' ? 1 : 0 });
+          const labels = kind === 'image' ? IMAGE_TAGS : DOCUMENT_TAGS;
+          tagEls.forEach((el, i) => {
+            el.textContent = labels[i];
+          });
+        };
         const tl = gsap.timeline({ repeat: -1, repeatDelay: 0.8 });
+        tl.eventCallback('onRepeat', () => {
+          kind = kind === 'image' ? 'document' : 'image';
+        });
 
-        tl.set('.memory-photo', { autoAlpha: 0, scale: 0.8, rotation: -4 })
+        tl.call(applyKind)
+          .set('.memory-photo', { autoAlpha: 0, scale: 0.8, rotation: -4 })
           .set('.memory-tag', { autoAlpha: 0, y: 10, scale: 0.6 })
           .set(particles, { autoAlpha: 0, x: 0, y: 0, rotation: 0, scale: 1 })
           .set('.memory-status', { autoAlpha: 0, y: 8 })
@@ -85,7 +103,8 @@ export function MemoryDemo() {
       <div className="relative mt-6 flex h-56 flex-col items-center justify-center" aria-hidden>
         <div className="relative h-32 w-40">
           <div className="memory-photo invisible absolute inset-0 flex items-center justify-center rounded-2xl bg-gradient-to-br from-butter-soft to-periwinkle-soft opacity-0">
-            <Dog className="h-12 w-12 text-ink/70" strokeWidth={1.6} />
+            <Dog className="memory-icon-image absolute h-12 w-12 text-ink/70" strokeWidth={1.6} />
+            <FileText className="memory-icon-document invisible absolute h-12 w-12 text-ink/70 opacity-0" strokeWidth={1.6} />
           </div>
           {Array.from({ length: COLS * ROWS }, (_, i) => (
             <span
@@ -118,7 +137,7 @@ export function MemoryDemo() {
           <p className="font-bold">Filename, tags, status</p>
         </div>
         <div>
-          <p className="text-ink-soft">Image bytes stored</p>
+          <p className="text-ink-soft">File bytes stored</p>
           <p className="inline-flex items-center gap-1.5 font-bold">
             <Lock className="h-4 w-4 text-sage-deep" />
             <span className="memory-zero inline-block">0 bytes</span>

@@ -2,6 +2,8 @@
 
 React 19 + Vite 8 + Tailwind 4 + TypeScript. Deployed to Vercel (Root Directory `frontend`) at **https://drivetag-ai.com** — production-ready, live end to end against the real backend.
 
+DriveTag sorts two **kinds** of work process, chosen when a process is created and fixed afterwards: `image` and `document` (PDF, Word, Google Docs/Sheets/Slides, text — added in this release). Plans come in three **families** that share the same three tiers — Images, Documents, and Images + Documents — see [Pricing UI](#pricing-ui-cookie-consent--analytics-legal-pages).
+
 - **[../README.md](../README.md)** — product overview, plans and pricing, the document-sorting cost strategy.
 - **[../CLAUDE.md](../CLAUDE.md)** — architecture and the non-obvious design decisions for the whole repo; this doc doesn't repeat that reasoning.
 - **[../backend/README.md](../backend/README.md)** — API setup, env vars, database, deployment, operations.
@@ -148,12 +150,12 @@ Then submit for **brand verification**. Because the app requests the restricted 
 |---|---|---|
 | `/` | public | Landing — product, pricing |
 | `/login` | public | Google sign-in |
-| `/plans` | public | Plan and top-up comparison, `#documents` anchor for the document-pricing preview |
+| `/plans` | public | Family and plan comparison. `?family=images\|documents\|complete` deep-links a family (`FamilyPicker`); the legacy `#documents` anchor still works and pre-selects Documents |
 | `/privacy`, `/terms`, `/refunds`, `/cookies`, `/data-deletion` | public | Legal pages ([Pricing UI, cookie consent & analytics, legal pages](#pricing-ui-cookie-consent--analytics-legal-pages)) |
-| `/onboarding` | protected | Stepper that creates the first work process |
-| `/dashboard` | protected | Per-process cards, usage meter, activity feed, account |
+| `/onboarding` | protected | 5-step stepper (Connect Drive → What to sort → Raw folder → Sorting → Go live) that creates the first work process, of either kind |
+| `/dashboard` | protected | Per-process cards (with a kind badge), per-kind usage meter, activity feed, account |
 | `/connect` | protected | Where the backend's `GET /api/auth/google/callback` redirects; claims the parked Drive grant |
-| `/processes/new`, `/processes/:id` | protected | Work process editor |
+| `/processes/new`, `/processes/:id` | protected | Work process editor. `/processes/new` opens with an images-or-documents kind picker (`ProcessKindPicker`); once a process is saved, its kind is fixed and the editor shows it as a read-only badge (`ProcessKindBadge`) instead |
 
 `ProtectedRoute` (`src/components/ProtectedRoute.tsx`) redirects signed-out visitors to `/login`. Auth state comes from `AuthContext` (`src/contexts/AuthContext.tsx`), backed by real `supabase.auth.signInWithOAuth({ provider: 'google' })` / `signOut()`.
 
@@ -170,13 +172,18 @@ src/
 │   ├── RouteAnalytics.tsx       Vercel Analytics: explicit route tracking, URL redaction, consent gate
 │   ├── CookieConsent.tsx        bottom consent banner
 │   ├── SiteFooter.tsx           legal links, "Cookie settings", support email
-│   ├── TagFlowIllustration.tsx, MemoryDemo.tsx   animated marketing illustrations
+│   ├── TagFlowIllustration.tsx, DocumentFlowIllustration.tsx, PageCapIllustration.tsx, MemoryDemo.tsx
+│   │                            animated marketing illustrations (MemoryDemo alternates an image and a document each loop)
 │   ├── ui/                      Button/ButtonLink, Card, Modal, ConfirmDialog, TextField/TextArea, Switch,
 │   │                            ProgressBar, Logo, Skeleton/PageLoader, AnimatedNumber, BlobBackground
 │   ├── drive/                   FolderBrowser (breadcrumbs, search, new folder), FolderPickerField
-│   ├── processes/               ProcessForm + destination, naming-template, tag-field and instruction editors
-│   ├── billing/                 PlanGrid/PlanCard, TopupPacks, TransparencyNote, DocumentPricing, UsageMeter, planFeatures
-│   └── dashboard/                useDashboardData polling + Account/Sorting/Usage/Process/Connection/Stats/Activity cards
+│   ├── processes/               ProcessForm, ProcessKindPicker/ProcessKindBadge, processDraft (per-kind defaults,
+│   │                            reserved tag keys, template validation) + destination, naming-template, tag-field
+│   │                            and instruction editors
+│   ├── billing/                 FamilyPicker, PlanGrid/PlanCard, TopupPacks (image + document packs),
+│   │                            DocumentsExplainer, LandingPricingSection, TransparencyNote, UsageMeter, planFeatures
+│   └── dashboard/                useDashboardData polling + Account/Sorting/Usage/Process/Connection/Stats/Activity
+│                                 cards, each kind-aware (badges, per-kind credits, activity kind filter)
 ├── hooks/                       usePressMotion, useReveal, usePlans, useDocumentTitle
 ├── lib/
 │   ├── supabase.ts               anon-key client (PKCE flow)
@@ -189,6 +196,45 @@ src/
     ├── Landing, Login, Plans, Onboarding, Dashboard, Connect, ProcessEditor
     └── legal/                    Privacy, Terms, Refunds, Cookies, DataDeletion, LegalPage (shared layout), links.ts
 ```
+
+---
+
+## Rolling deploys: tolerating an older backend
+
+Vercel and this backend deploy from the same push but as two separate services, and Vercel usually finishes first — so for a few minutes after every push, the new frontend can be talking to the *previous* backend. `src/lib/api.ts` normalizes around that gap instead of crashing or showing broken UI:
+
+- `withKind()` defaults a process's `kind` to `'image'` when a `GET /api/processes` response omits it.
+- `withKindUsage()` fills in `usage.images`/`usage.documents` from the legacy flat fields (`freeUsed`/`freeLimit`/…) when `GET /api/me` doesn't return them yet, and defaults `plan.family`/`freeDocuments`/`monthlyDocuments`.
+- `withPlanFamilies()` does the same for `GET /api/plans`: empty `families`/`documentPacks` arrays and sensible `fileLimits` defaults when the backend predates them, and derives `plan.family`/`plan.tier` from the plan id when they're missing.
+- `lib/messages.ts`'s `errorMessage()` catches the sharper failure mode too — a route that doesn't exist at all yet (a 404 whose message starts with `"No route for"`) — and shows "DriveTag is updating. Refresh in a minute." instead of a raw error.
+
+Every normalizer's fallback is the literal shape the previous release's API actually served, not a guess — keep these when adding the next new field for the same reason.
+
+---
+
+## Work processes
+
+A work process's **kind** — `image` or `document` — is chosen once, when it's created, and never changes afterwards; the backend rejects a `PUT` that tries to change it.
+
+- **`ProcessKindPicker`** (`components/processes/ProcessKindPicker.tsx`) is two large radio cards ("Images" / "Documents", each with its supported-file-types blurb), shown on `/processes/new` and in onboarding's "What to sort" step. **`ProcessKindBadge`**, exported from the same file, replaces it once a process exists: a read-only pill plus a note that a process can't switch kinds.
+- **Per-kind defaults and tokens** live in `components/processes/processDraft.ts`, mirroring `backend/src/utils/processValidation.js` and `backend/src/utils/filename.js`:
+  - `DEFAULT_TEMPLATE_BY_KIND`: `{destination}_{subject}` for images, `{type}_{organization}_{topic}` for documents.
+  - `TEMPLATE_TOKENS_BY_KIND` (from `lib/filename.ts`) gates which `{token}` the naming-template editor and its live preview accept; a token from the other kind is rejected with a hint naming that kind's own tokens.
+  - `DESTINATION_IDEAS_BY_KIND` and `TAG_FIELD_IDEAS_BY_KIND` give the destination list and tag-field list different one-click starting points per kind (e.g. images suggest "Logos"/"Product shots"; documents suggest "Invoices"/"Contracts").
+  - `RESERVED_TAG_KEYS_BY_KIND` reserves a tag key only against the process's **own** kind's tokens (plus `tag`, `tags`, `ext`, `unsorted`, `fields`) — not the union of both kinds', so an existing image process that already has a tag keyed `type` or `topic` isn't locked out.
+- **Onboarding** (`pages/Onboarding.tsx`) is a 5-step stepper: **Connect Drive → What to sort → Raw folder → Sorting → Go live**. "What to sort" is the new step, showing `ProcessKindPicker`; the destination-row examples and plan-note copy on later steps switch with the chosen kind (`EXAMPLES_BY_KIND`, `kindWord()`).
+- **`ProcessForm`** (`components/processes/ProcessForm.tsx`) shows `ProcessKindPicker` only while creating (`draft.kind` still unset); an existing process shows `ProcessKindBadge` instead, and every label on the page (naming hints, destination examples, tag-field suggestions) reads from the process's own kind.
+
+---
+
+## Dashboard
+
+- **Per-process kind badge.** `ProcessCard` (`components/dashboard/ProcessCard.tsx`) always shows a first badge for the process's kind ("Images" or "Documents"), alongside Paused/Over plan limit/Busy badges as they apply.
+- **Per-kind credits.** Every dashboard surface that talks about "how many images/documents are left" reads the process's own kind's balance (`kindUsageOf(usage, process.kind)` from `lib/messages.ts`), not a flat image count: the "Organize now" confirm dialog when the waiting count exceeds the remaining balance, the "Out of ⟨kind⟩ credits" note under a card, and `UsageCard`/`UsageMeter` on the dashboard header.
+- **Exhausted-kind notes.** `UsageCard` and `UsageMeter` compute `anyKindExhausted(plan, usage)` (`components/billing/planFeatures.ts`) and show a rose-toned banner the moment either balance hits zero — a mixed account (e.g. out of images, plenty of documents left) still sorts the kind that has credits; the banner and the per-process note both say so.
+- **Activity feed.** `ActivityList` (`components/dashboard/ActivityList.tsx`) shows a kind icon (image/document) next to each filename, renders document rows' chips from `type`/`topic`/`organization`/`document_date` instead of images' `genre`/`subject`/`style`, and — once an account's activity actually mixes both kinds — adds an "All kinds / Images / Documents" filter row alongside the existing per-process filter.
+- **Account.** `AccountCard` → **"Delete account"**: typed `DELETE` confirmation → `api.deleteAccount()` → `DELETE /api/me` → signs out (falling back to a local-only sign-out if the server call fails, since the account is already gone by then).
+- Each process card shows live **"N AI sorting"**, from `status.workers[processId]`, and **"Up to N AI at once on your plan"** from `plan.aiPerProcess`.
 
 ---
 
@@ -228,19 +274,32 @@ GSAP guidance for Claude Code lives in `../.claude/skills/gsap-*` — third-part
 
 ---
 
+## Marketing
+
+- **"What DriveTag sorts"** — a Landing page section (`pages/Landing.tsx`, `#sorts`) added for this release, pitching images and documents as one flow: a two-column "Now it reads documents too" panel next to `DocumentFlowIllustration`, then side-by-side "Images"/"Documents" example cards (before → after filename, with a destination chip), then `PageCapIllustration`. Copy reads the page cap and character cap from `GET /api/plans`' `fileLimits` (`pagesRead`, `textChars`) rather than hard-coding "5 pages" — the same rule as [Pricing UI](#pricing-ui-cookie-consent--analytics-legal-pages).
+- **`DocumentFlowIllustration`** and **`PageCapIllustration`** (`src/components/`) are new animated SVG illustrations, alongside the existing `TagFlowIllustration`; all three follow the [Animation](#animation) rules — GSAP from `lib/gsap.ts` only, wrapped in `gsap.matchMedia()` so reduced-motion users get the end state instantly.
+- **`MemoryDemo`** (`src/components/MemoryDemo.tsx`) — the "your file is never stored" animated demo — now alternates between an image and a document each loop (a `kind` variable flipped in the timeline's `onRepeat`), swapping its icon and tag chips (`IMAGE_TAGS`/`DOCUMENT_TAGS`) without rebuilding the timeline.
+- **Meta/OG tags** (`index.html`) mention both images and documents and the Zero-Retention promise: `description`, `og:title`/`og:description`, `twitter:title`/`twitter:description`. Keep these in sync with the Landing page's actual pitch.
+
+---
+
 ## Pricing UI, cookie consent & analytics, legal pages
 
 ### Pricing UI
 
 Every price, limit and feature line on `/plans` and the Landing page is driven by `GET /api/plans` (`backend/src/config/plans.js`), via `hooks/usePlans.ts` — **never hard-code a price or limit in the frontend.**
 
+- **`FamilyPicker`** (`components/billing/FamilyPicker.tsx`) is a single-choice, accessible segmented control — native radio inputs in a `fieldset`, so arrow-key navigation and screen readers come for free — for the three paid families (Images / Documents / Images + Documents). `/plans` keeps the chosen family in the URL (`?family=images|documents|complete`, `useSearchParams`) so a link can land directly on one; the landing page's copy (`LandingPricingSection.tsx`) keeps its own `useState` instead, since it's a smaller, self-contained picker. The legacy `#documents` anchor still works: `Plans.tsx` reads `window.location.hash === '#documents'` once on mount and pre-selects Documents.
+- **`PlanGrid`/`PlanCard`** (`components/billing/PlanGrid.tsx`, `PlanCard.tsx`) render Free plus the selected family's Creator/Studio/Enterprise tiers (`plansForFamily()` in `planFeatures.ts`). An Images + Documents card shows a savings line — `bundleSavings()` compares it against buying that tier's Images and Documents plans separately, and returns `null` (nothing shown) unless the saving is genuinely positive, never a fabricated percentage.
 - **Prices** are USD placeholders, formatted by `formatPrice()` (`components/billing/planFeatures.ts`).
-- **Yearly "N months free"** is computed from the monthly vs. yearly price (`monthsFree()`), not stored as copy.
-- **"Recommended" badge** comes from `plan.popular` in the API payload (`PlanCard.tsx`: `const featured = plan.popular`). It deliberately says "Recommended," not "Most popular" — nobody has paid yet, so a popularity claim would be fake social proof.
-- **AI-workers-per-process** feature line: `aiWorkersFeature()` in `planFeatures.ts`.
-- **Top-up packs** (`TopupPacks.tsx`) show a per-unit price via `perUnitPrice()`.
+- **Yearly "N months free"** is computed from the monthly vs. yearly price (`monthsFree()`), not stored as copy. Enterprise tiers are monthly-only, so they show no yearly toggle.
+- **"Recommended" badge** comes from `plan.popular` in the API payload (`PlanCard.tsx`: `const featured = plan.popular`) — the Studio tier of each family. It deliberately says "Recommended," not "Most popular" — nobody has paid yet, so a popularity claim would be fake social proof.
+- **Feature lines**: `processesFeature()`, `aiWorkersFeature()`, and `allowanceFeatures()` — the last shows only the allowance(s) a plan actually includes (`imagesFeature()`/`documentsFeature()`), so a single-kind plan doesn't show "0 documents".
+- **Packs of both kinds.** `TopupPacks.tsx` renders either an image-pack or a document-pack list via a `unitLabel` prop ("image"/"document") and shows a per-unit price via `perUnitPrice()`; `/plans` renders both lists side by side from `plans.topupPacks` and `plans.documentPacks`.
+- **`DocumentsExplainer`** (`components/billing/DocumentsExplainer.tsx`) replaced the old, "Coming soon" `DocumentPricingSection` — documents are live, so this explains how one is counted (at most `fileLimits.pagesRead` PDF pages or `fileLimits.textChars` characters = one credit; oversized files are skipped, not charged; the `fileLimits.editingGraceMinutes` grace for Google-native files) instead of previewing a price. It renders full at `/plans#documents-explainer` and `compact` (one paragraph) on the landing page.
+- **`LandingPricingSection`** (`components/billing/LandingPricingSection.tsx`) is the landing page's `FamilyPicker` + compact `PlanGrid` + compact `DocumentsExplainer` + compact `TransparencyNote`, pulled into its own component because it needs its own family `useState`.
+- **`UsageMeter`** (`components/billing/UsageMeter.tsx`) and the dashboard's `UsageCard` render one row per kind (`KindRow`), each with its own progress bar, "N of M used" line, top-up-balance chip, and refill date; a kind the plan doesn't include at all shows "Not included in your plan · add a pack or switch plan" instead of a bar. `kindIncluded()`/`kindLimit()`/`anyKindExhausted()`/`kindUsageSummary()` in `planFeatures.ts` drive this and are reused by the dashboard's `ProcessCard`.
 - **`TransparencyNote`** (`components/billing/TransparencyNote.tsx`) is the required no-hidden-fees note next to any price display: tax/VAT calculated at checkout, auto-renewal and cancellation terms, no overage fees, and a link to `/refunds`.
-- **`DocumentPricingSection`** (`components/billing/DocumentPricing.tsx`) renders at `/plans#documents`, labelled "Coming soon" — the document pipeline isn't built yet ([../README.md](../README.md#document-sorting-cost-strategy)).
 - **All purchase buttons are disabled**, showing "Coming soon" with a `PAYMENTS_PENDING_NOTE` tooltip — no payment provider is integrated yet.
 
 ### Cookie consent & analytics
@@ -265,19 +324,13 @@ Every price, limit and feature line on `/plans` and the Landing page is driven b
 - **Contacts:** `support@drivetag-ai.com` (billing/refunds), `privacy@drivetag-ai.com` (privacy/data).
 - **Update these pages whenever data handling, providers, browser storage keys, or refund terms change** — they're the source of truth Google's brand verification and users both rely on.
 
-### Account & dashboard
-
-- Dashboard's `AccountCard` → **"Delete account"**: typed `DELETE` confirmation → `api.deleteAccount()` → `DELETE /api/me` → signs out (falling back to a local-only sign-out if the server call fails, since the account is already gone by then).
-- Dashboard shows live **"N AI sorting"** per process, from `status.workers[processId]`, and **"Up to N AI at once on your plan"** from `plan.aiPerProcess`.
-
 ---
 
 ## State & next steps
 
 - **Checkout UI** — once a payment provider (Lemon Squeezy vs. Paddle) is chosen. Plan/pack buttons already show real prices from `/api/plans`; only the purchase action is missing.
-- **Document-process UI** — a document-process section on the dashboard, and switching `DocumentPricingSection` off "Coming soon", once the document pipeline ships (`../README.md`).
 - **Google Drive Picker widget** — optional upgrade over the current searchable folder list (`components/drive/FolderBrowser.tsx`).
 - **Unsaved-changes guard on browser Back** in the process editor. `ProcessEditor.tsx` guards a page unload (`beforeunload`) and in-app router links (`guardLinks`), but `BrowserRouter` has no `useBlocker`, so the browser's own Back/Forward buttons aren't covered yet.
 - **Dashboard "At a glance" counts** cover the latest 50 activity rows (`ACTIVITY_LIMIT`), not all-time totals — the card says so; real totals need a count endpoint.
 - **Rename the package** — `frontend/package.json`'s `name` is still `"temp-front"`.
-- **Code-split the bundle.** The production build emits a single ~925 KB JS chunk (`dist/assets/index-*.js`), over Vite's 500 KB warning threshold. Route-level `React.lazy` is the natural first cut.
+- **Code-split the bundle.** The production build emits a single ~981 KB JS chunk (`dist/assets/index-*.js`), over Vite's 500 KB warning threshold and grown from ~925 KB with this release's new components. Route-level `React.lazy` is the natural first cut.

@@ -3,7 +3,7 @@
 //
 // Deliberately no node: imports, so the two files stay line-for-line comparable.
 
-const MIME_EXTENSIONS = {
+const IMAGE_MIME_EXTENSIONS = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
   "image/webp": ".webp",
@@ -13,10 +13,38 @@ const MIME_EXTENSIONS = {
   "image/tiff": ".tif",
 };
 
-export const SUPPORTED_MIME_TYPES = Object.keys(MIME_EXTENSIONS);
+const DOCUMENT_MIME_EXTENSIONS = {
+  "application/pdf": ".pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "text/plain": ".txt",
+  "text/markdown": ".md",
+  "text/x-markdown": ".md",
+  "text/csv": ".csv",
+  // Google Docs, Sheets and Slides have no file extension in Drive.
+  "application/vnd.google-apps.document": "",
+  "application/vnd.google-apps.spreadsheet": "",
+  "application/vnd.google-apps.presentation": "",
+};
 
-/** Tokens a rename template may use, besides {tag:<key>} for custom tag fields. */
-export const TEMPLATE_TOKENS = ["destination", "subject", "style", "genre", "date", "original", "process"];
+const MIME_EXTENSIONS = { ...IMAGE_MIME_EXTENSIONS, ...DOCUMENT_MIME_EXTENSIONS };
+
+/** The files each kind of work process sorts. Anything else in its Raw folder is left alone. */
+export const MIME_TYPES_BY_KIND = {
+  image: Object.keys(IMAGE_MIME_EXTENSIONS),
+  document: Object.keys(DOCUMENT_MIME_EXTENSIONS),
+};
+
+/** Image MIME types; kept for callers that predate document processes. */
+export const SUPPORTED_MIME_TYPES = MIME_TYPES_BY_KIND.image;
+
+/** Tokens a rename template may use per process kind, besides {tag:<key>} for custom tag fields. */
+export const TEMPLATE_TOKENS_BY_KIND = {
+  image: ["destination", "subject", "style", "genre", "date", "original", "process"],
+  document: ["destination", "type", "topic", "organization", "docdate", "date", "original", "process"],
+};
+
+/** Image tokens; kept for callers that predate document processes. */
+export const TEMPLATE_TOKENS = TEMPLATE_TOKENS_BY_KIND.image;
 
 const MAX_BASE_LENGTH = 150;
 const LITERAL_ALLOWED = /^[A-Za-z0-9 _\-.()]*$/;
@@ -63,13 +91,37 @@ export function parseTemplate(template) {
   return parts;
 }
 
+// The other kind's tokens named in a cross-kind hint, e.g. "document processes use {type}, {topic} or {organization}."
+// A short, descriptive subset rather than every token of that kind (skips the ones shared with the other kind, like {date}).
+const KIND_HINT_TOKENS = {
+  image: ["subject", "style", "genre"],
+  document: ["type", "topic", "organization"],
+};
+const KIND_ARTICLE = { image: "an image", document: "a document" };
+
+/** The token a template falls back to, and what to call the file, when it renders empty. */
+const FALLBACK_TOKEN_BY_KIND = { image: "subject", document: "topic" };
+const FALLBACK_NAME_BY_KIND = { image: "image", document: "document" };
+
+function otherKind(kind) {
+  return kind === "document" ? "image" : "document";
+}
+
+function tokenListMessage(tokens) {
+  const bracketed = tokens.map((token) => `{${token}}`);
+  return bracketed.length <= 1 ? bracketed.join("") : `${bracketed.slice(0, -1).join(", ")} or ${bracketed[bracketed.length - 1]}`;
+}
+
 /** Human-readable problems with a template; an empty array means it's valid. */
-export function validateTemplate(template, tagKeys = []) {
+export function validateTemplate(template, tagKeys = [], kind = "image") {
   const errors = [];
   const text = String(template ?? "");
   if (!text.trim()) return ["The naming template can't be empty."];
 
-  let tokens = 0;
+  const tokens = TEMPLATE_TOKENS_BY_KIND[kind] ?? TEMPLATE_TOKENS_BY_KIND.image;
+  const other = otherKind(kind);
+
+  let tokenCount = 0;
   for (const part of parseTemplate(text)) {
     if (part.type === "error") {
       errors.push(`"${part.value}" has an unmatched brace.`);
@@ -78,16 +130,22 @@ export function validateTemplate(template, tagKeys = []) {
         errors.push(`"${part.value}" can only use letters, numbers, spaces and - _ . ( ).`);
       }
     } else {
-      tokens += 1;
+      tokenCount += 1;
       const tagMatch = /^tag:(.+)$/.exec(part.value);
       if (tagMatch) {
         if (!tagKeys.includes(tagMatch[1])) errors.push(`{${part.value}} doesn't match any of this process's tag fields.`);
-      } else if (!TEMPLATE_TOKENS.includes(part.value)) {
-        errors.push(`{${part.value}} isn't a naming token.`);
+      } else if (!tokens.includes(part.value)) {
+        if (TEMPLATE_TOKENS_BY_KIND[other].includes(part.value)) {
+          errors.push(`{${part.value}} is ${KIND_ARTICLE[other]} token; ${kind} processes use ${tokenListMessage(KIND_HINT_TOKENS[kind])}.`);
+        } else {
+          errors.push(`{${part.value}} isn't a naming token.`);
+        }
       }
     }
   }
-  if (tokens === 0) errors.push("Add at least one token, like {subject}, so files don't all get the same name.");
+  if (tokenCount === 0) {
+    errors.push(`Add at least one token, like {${FALLBACK_TOKEN_BY_KIND[kind]}}, so files don't all get the same name.`);
+  }
   return errors;
 }
 
@@ -153,12 +211,17 @@ function renderBase(template, values) {
  * The name a sorted file gets, e.g. "{destination}_{subject}_{date}" →
  * "logos_acme-wordmark_2026-09-17.png". Every token value is slugged; empty
  * tokens don't leave doubled separators behind. Drive allows duplicate names
- * in a folder, so similar images can share a name and stay distinct by ID.
+ * in a folder, so similar files can share a name and stay distinct by ID.
+ * Google-native files (Docs/Sheets/Slides) have no extension in Drive and
+ * MIME_EXTENSIONS maps them to "", so they keep none here either.
  *
- * values: { destination, subject, style, genre, date, original, process, tags: { key: value } }
+ * values (image): { destination, subject, style, genre, date, original, process, tags: { key: value } }
+ * values (document): { destination, type, topic, organization, docdate, date, original, process, tags }
  */
-export function renderFileName(template, values, { originalName, mimeType } = {}) {
-  const base = renderBase(template, values) || renderBase("{subject}", values) || "image";
+export function renderFileName(template, values, { originalName, mimeType, kind = "image" } = {}) {
+  const fallbackToken = FALLBACK_TOKEN_BY_KIND[kind] ?? FALLBACK_TOKEN_BY_KIND.image;
+  const fallbackName = FALLBACK_NAME_BY_KIND[kind] ?? FALLBACK_NAME_BY_KIND.image;
+  const base = renderBase(template, values) || renderBase(`{${fallbackToken}}`, values) || fallbackName;
   const extension = extensionOf(originalName) || MIME_EXTENSIONS[mimeType] || "";
   return `${base}${extension}`;
 }

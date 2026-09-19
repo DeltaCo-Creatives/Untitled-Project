@@ -1,12 +1,21 @@
 import { PROCESS_LIMITS } from "../config/plans.js";
-import { TEMPLATE_TOKENS, validateTemplate } from "./filename.js";
+import { TEMPLATE_TOKENS_BY_KIND, validateTemplate } from "./filename.js";
 import { isValidTimeZone } from "./fileDate.js";
 
 const TAG_KEY = /^[a-z][a-z0-9_]{0,31}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// Tag keys share the response schema and template namespace with these.
-const RESERVED_TAG_KEYS = new Set([...TEMPLATE_TOKENS, "tag", "tags", "ext", "unsorted", "fields"]);
+// A tag key shares the AI response schema and the template namespace with the process's own
+// naming tokens, so it can't reuse one of them. Only the process's own kind is reserved: an image
+// process may keep a "type" or "topic" tag (existing ones do), since those names only mean
+// something to document processes, and vice versa.
+const RESERVED_WORDS = ["tag", "tags", "ext", "unsorted", "fields"];
+const RESERVED_TAG_KEYS_BY_KIND = {
+  image: new Set([...TEMPLATE_TOKENS_BY_KIND.image, ...RESERVED_WORDS]),
+  document: new Set([...TEMPLATE_TOKENS_BY_KIND.document, ...RESERVED_WORDS]),
+};
 const FOLDER_MODES = new Set(["existing", "create", "master"]);
+const KINDS = new Set(["image", "document"]);
+const DEFAULT_TEMPLATE_BY_KIND = { image: "{destination}_{subject}", document: "{type}_{organization}_{topic}" };
 
 export function isUuid(value) {
   return typeof value === "string" && UUID.test(value);
@@ -21,15 +30,41 @@ function text(value) {
  * existence and cross-process folder conflicts are checked by the service
  * once folders are resolved (see folderConflicts).
  *
- * Body: { name, rawFolderId, masterFolderId, renameTemplate, instructions, timezone, enabled,
+ * Body: { kind, name, rawFolderId, masterFolderId, renameTemplate, instructions, timezone, enabled,
  *         tagFields: [{ key, label, description }],
  *         destinations: [{ id?, name, description, isFallback, folder: { mode: "existing", id } | { mode: "create" } | { mode: "master" } }] }
+ *
+ * `existingKind` (from the caller's already-loaded process) tells this function whether it's a
+ * create or an update, and is how the "images vs documents" kind is decided:
+ * - create (existingKind undefined): `kind` is required and must be "image" or "document".
+ * - update (existingKind "image"|"document"): a process's kind never changes. Omitting `kind`
+ *   from the body is accepted as "leave it as it is" (the same rule PUT already uses for
+ *   `enabled`), because older frontend builds mid-deploy won't send it and the client can't
+ *   change it anyway. A `kind` that IS present and differs from existingKind is a 400 on the
+ *   `kind` field. save_work_process repeats this check in SQL as a backstop.
  */
-export function validateProcessInput(body) {
+export function validateProcessInput(body, { existingKind } = {}) {
   const errors = [];
   const fail = (field, message) => errors.push({ field, message });
   const input = body && typeof body === "object" ? body : {};
   const L = PROCESS_LIMITS;
+
+  const isCreate = existingKind === undefined;
+  const hasKindField = Object.prototype.hasOwnProperty.call(input, "kind");
+  let kind;
+  if (isCreate) {
+    const requestedKind = text(input.kind);
+    kind = KINDS.has(requestedKind) ? requestedKind : "image"; // fallback only so later checks (e.g. template) have a kind to validate against
+    if (!KINDS.has(requestedKind)) fail("kind", "Choose whether this process sorts images or documents.");
+  } else {
+    if (hasKindField) {
+      const requestedKind = text(input.kind);
+      if (requestedKind !== existingKind) {
+        fail("kind", "A process can't switch between images and documents. Create a new process instead.");
+      }
+    }
+    kind = existingKind;
+  }
 
   const name = text(input.name);
   if (!name) fail("name", "Give this process a name.");
@@ -38,7 +73,7 @@ export function validateProcessInput(body) {
   const rawFolderId = text(input.rawFolderId);
   const masterFolderId = text(input.masterFolderId);
   if (!rawFolderId) fail("rawFolderId", "Choose the Raw folder DriveTag watches.");
-  if (!masterFolderId) fail("masterFolderId", "Choose the Master folder sorted images go into.");
+  if (!masterFolderId) fail("masterFolderId", "Choose the Master folder sorted files go into.");
   if (rawFolderId && rawFolderId === masterFolderId) {
     fail("masterFolderId", "The Master folder has to be different from the Raw folder.");
   }
@@ -65,7 +100,7 @@ export function validateProcessInput(body) {
       const description = text(field?.description);
       const at = `tagFields[${index}]`;
       if (!TAG_KEY.test(key)) fail(`${at}.key`, "Use a short key: lowercase letters, numbers and _, starting with a letter.");
-      else if (RESERVED_TAG_KEYS.has(key)) fail(`${at}.key`, `"${key}" is already a built-in token; pick another key.`);
+      else if (RESERVED_TAG_KEYS_BY_KIND[kind].has(key)) fail(`${at}.key`, `"${key}" is already a built-in token; pick another key.`);
       else if (seen.has(key)) fail(`${at}.key`, `Two tag fields use the key "${key}".`);
       seen.add(key);
       if (!label) fail(`${at}.label`, "Give this tag field a label.");
@@ -77,11 +112,11 @@ export function validateProcessInput(body) {
     });
   }
 
-  const renameTemplate = text(input.renameTemplate) || "{destination}_{subject}";
+  const renameTemplate = text(input.renameTemplate) || DEFAULT_TEMPLATE_BY_KIND[kind];
   if (renameTemplate.length > L.templateMax) {
     fail("renameTemplate", `Keep the naming template under ${L.templateMax} characters.`);
   } else {
-    for (const message of validateTemplate(renameTemplate, tagFields.map((field) => field.key))) {
+    for (const message of validateTemplate(renameTemplate, tagFields.map((field) => field.key), kind)) {
       fail("renameTemplate", message);
     }
   }
@@ -141,6 +176,7 @@ export function validateProcessInput(body) {
   return {
     errors,
     value: {
+      kind,
       name,
       rawFolderId,
       masterFolderId,
@@ -155,7 +191,7 @@ export function validateProcessInput(body) {
 }
 
 /**
- * Folder relationships that would let images loop between processes, checked
+ * Folder relationships that would let files loop between processes, checked
  * against the user's OTHER processes (all of them, including disabled and
  * locked ones) once every destination folder id is known.
  *
@@ -176,12 +212,12 @@ export function folderConflicts(folders, otherProcesses) {
   } else if (sortedIntoOwners.has(folders.rawFolderId)) {
     errors.push({
       field: "rawFolderId",
-      message: `"${sortedIntoOwners.get(folders.rawFolderId)}" sorts images into that folder, so it can't be a Raw folder too.`,
+      message: `"${sortedIntoOwners.get(folders.rawFolderId)}" sorts files into that folder, so it can't be a Raw folder too.`,
     });
   }
 
   if (rawOwners.has(folders.masterFolderId)) {
-    errors.push({ field: "masterFolderId", message: `That's the Raw folder of "${rawOwners.get(folders.masterFolderId)}"; images would loop.` });
+    errors.push({ field: "masterFolderId", message: `That's the Raw folder of "${rawOwners.get(folders.masterFolderId)}"; files would loop.` });
   }
 
   for (const { index, folderId } of folders.destinations) {
@@ -190,7 +226,7 @@ export function folderConflicts(folders, otherProcesses) {
     } else if (rawOwners.has(folderId)) {
       errors.push({
         field: `destinations[${index}].folder`,
-        message: `That's the Raw folder of "${rawOwners.get(folderId)}"; images would loop.`,
+        message: `That's the Raw folder of "${rawOwners.get(folderId)}"; files would loop.`,
       });
     }
   }

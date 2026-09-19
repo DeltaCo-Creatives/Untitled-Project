@@ -33,17 +33,17 @@ async function releaseStaleClaim(userId, fileId) {
 
 /**
  * Idempotency ledger + user-facing activity history. Stores filenames and
- * tags only — never image bytes, per the Zero-Retention posture.
+ * tags only — never image or document bytes, per the Zero-Retention posture.
  *
  * Returns a claim token (the row's claimed_at) when this caller now owns the
  * file, or null when it was already processed or is being processed (unique
  * violation) — the guard against Drive redelivering a notification.
  */
-export async function claimFile(userId, fileId, originalName, processId) {
+export async function claimFile(userId, fileId, originalName, processId, kind = "image") {
   const insert = () =>
     supabase
       .from("processed_files")
-      .insert({ user_id: userId, file_id: fileId, original_name: originalName, process_id: processId })
+      .insert({ user_id: userId, file_id: fileId, original_name: originalName, process_id: processId, kind })
       .select("claimed_at")
       .single();
 
@@ -76,13 +76,13 @@ export async function holdsClaim(userId, fileId, claim) {
 }
 
 /**
- * Records the result and charges one image credit in a single transaction
- * (complete_processed_file in 0002), fenced by the claim token. Returns the
- * bucket charged — "free" | "monthly" | "topup" | "overage" — or null if the
- * claim was lost, in which case nothing was recorded or charged.
+ * Records the result and charges one credit of the given kind in a single
+ * transaction (complete_processed_file_v2 in 0004), fenced by the claim token.
+ * Returns the bucket charged — "free" | "monthly" | "topup" | "overage" — or
+ * null if the claim was lost, in which case nothing was recorded or charged.
  */
-export async function completeFile(userId, fileId, claim, result, { freeLimit, monthlyLimit }) {
-  const { data, error } = await supabase.rpc("complete_processed_file", {
+export async function completeFile(userId, fileId, claim, result, { kind, freeLimit, monthlyLimit }) {
+  const { data, error } = await supabase.rpc("complete_processed_file_v2", {
     p_user_id: userId,
     p_file_id: fileId,
     p_claimed_at: claim,
@@ -90,6 +90,7 @@ export async function completeFile(userId, fileId, claim, result, { freeLimit, m
     p_tags: result.tags,
     p_destination_id: result.destinationId ?? null,
     p_destination_name: result.destinationName ?? null,
+    p_kind: kind,
     p_free_limit: freeLimit,
     p_monthly_limit: monthlyLimit,
   });
@@ -160,7 +161,7 @@ export async function listRecent(userId, { limit = 50, processId } = {}) {
   let query = supabase
     .from("processed_files")
     .select(
-      "file_id, original_name, new_name, tags, status, error_message, processed_at, claimed_at, process_id, destination_name",
+      "file_id, original_name, new_name, tags, status, error_message, processed_at, claimed_at, process_id, destination_name, kind",
     )
     .eq("user_id", userId);
   if (processId) query = query.eq("process_id", processId);

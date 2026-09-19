@@ -1,6 +1,7 @@
 import { useId, useRef, type ComponentType } from 'react';
 import { ArrowDown, ArrowUp, CircleAlert, FolderOpen, FolderPlus, FolderTree, Inbox, Trash } from 'lucide-react';
 import type { ProcessLimits } from '../../lib/api';
+import type { ProcessKind } from '../../lib/filename';
 import { gsap, useGSAP, prefersReducedMotion } from '../../lib/gsap';
 import { TextArea, TextField } from '../ui/TextField';
 import { FolderPickerField } from '../drive/FolderPickerField';
@@ -13,6 +14,7 @@ interface DestinationEditorCardProps {
   index: number;
   /** 1-based position among the regular destinations (unused for Unsorted). */
   number: number;
+  kind: ProcessKind;
   errors: Record<string, string>;
   limits: ProcessLimits;
   masterName: string | null;
@@ -25,6 +27,21 @@ interface DestinationEditorCardProps {
   onRemove?: () => void;
   onMove?: (direction: -1 | 1) => void;
 }
+
+const DESTINATION_COPY: Record<ProcessKind, { namePlaceholder: string; descriptionPlaceholder: string; descriptionHint: string; fallbackDescriptionPlaceholder: string }> = {
+  image: {
+    namePlaceholder: 'e.g. Logos',
+    descriptionPlaceholder: 'e.g. Brand marks, wordmarks and app icons',
+    descriptionHint: 'The AI reads this to decide what belongs here, e.g. brand marks, wordmarks, app icons',
+    fallbackDescriptionPlaceholder: 'e.g. Blurry shots, screenshots and anything unclear',
+  },
+  document: {
+    namePlaceholder: 'e.g. Invoices',
+    descriptionPlaceholder: 'e.g. Bills and receipts from suppliers',
+    descriptionHint: 'The AI reads this to decide what belongs here, e.g. bills and receipts, signed agreements',
+    fallbackDescriptionPlaceholder: 'e.g. Illegible scans and anything unclear',
+  },
+};
 
 type FolderMode = DestinationDraft['folderMode'];
 
@@ -82,6 +99,7 @@ export function DestinationEditorCard({
   destination,
   index,
   number,
+  kind,
   errors,
   limits,
   masterName,
@@ -105,6 +123,8 @@ export function DestinationEditorCard({
   const folderError = errors[`${at}.folder`];
   const generalError = errors[`${at}.id`];
   const master = masterName ? `“${masterName}”` : 'Master';
+  const noun = kind === 'document' ? 'document' : 'image';
+  const copy = DESTINATION_COPY[kind];
 
   // Pop the radio dot when the folder choice changes (not on first render).
   useGSAP(
@@ -169,7 +189,7 @@ export function DestinationEditorCard({
         )}
         <div className="min-w-0 flex-1">
           <h3 className={`truncate text-lg font-semibold ${trimmedName ? 'text-ink' : 'text-ink-soft'}`}>{displayName}</h3>
-          {isFallback && <p className="text-xs font-semibold text-ink-soft">For images that fit none of the others</p>}
+          {isFallback && <p className="text-xs font-semibold text-ink-soft">For {noun}s that don’t clearly fit another destination</p>}
         </div>
         {!isFallback && (
           <div className="flex shrink-0 items-center">
@@ -220,10 +240,10 @@ export function DestinationEditorCard({
             label="Name"
             value={destination.name}
             onChange={(event) => onChange({ name: event.currentTarget.value })}
-            placeholder={isFallback ? UNSORTED_NAME : 'e.g. Logos'}
+            placeholder={isFallback ? UNSORTED_NAME : copy.namePlaceholder}
             maxChars={limits.nameMax}
             error={errors[`${at}.name`]}
-            hint={isFallback ? 'This is what {destination} becomes for images that land here.' : undefined}
+            hint={isFallback ? `This is what {destination} becomes for ${noun}s that land here.` : undefined}
             disabled={disabled}
             autoComplete="off"
           />
@@ -235,15 +255,13 @@ export function DestinationEditorCard({
             value={destination.description}
             onChange={(event) => onChange({ description: event.currentTarget.value })}
             rows={2}
-            placeholder={
-              isFallback ? 'e.g. Blurry shots, screenshots and anything unclear' : 'e.g. Brand marks, wordmarks and app icons'
-            }
+            placeholder={isFallback ? copy.fallbackDescriptionPlaceholder : copy.descriptionPlaceholder}
             maxChars={limits.descriptionMax}
             error={errors[`${at}.description`]}
             hint={
               isFallback
-                ? 'Most people leave this blank. Add a note if some images should always land here.'
-                : 'The AI reads this to decide what belongs here, e.g. brand marks, wordmarks, app icons'
+                ? `Most people leave this blank. Add a note if some ${noun}s should always land here.`
+                : copy.descriptionHint
             }
             disabled={disabled}
           />

@@ -1,13 +1,21 @@
 import { env } from "../config/env.js";
-import { classifyImage } from "./gemini.service.js";
-import { getFileBuffer, getStartPageToken, listChanges, listImagesInFolder, renameAndMove } from "./drive.service.js";
+import { FILE_LIMITS } from "../config/plans.js";
+import { classifyImage, classifyDocument } from "./gemini.service.js";
+import { prepareDocument, isStillBeingEdited } from "./document.service.js";
+import { getFileBuffer, getFileMetadata, getStartPageToken, listChanges, listFilesInFolder, renameAndMove } from "./drive.service.js";
 import { loadEntitlement, rankProcesses } from "./entitlement.service.js";
 import { listProcesses } from "../repositories/workProcess.repo.js";
 import * as channels from "../repositories/driveChannel.repo.js";
 import * as processed from "../repositories/processedFile.repo.js";
-import { renderFileName, SUPPORTED_MIME_TYPES } from "../utils/filename.js";
+import { renderFileName, MIME_TYPES_BY_KIND } from "../utils/filename.js";
 import { fileDateString } from "../utils/fileDate.js";
 import { logger } from "../utils/logger.js";
+
+/** A row's kind, defaulting to "image" for rows saved before migration 0004 added the column. */
+const kindOf = (process) => process.kind ?? "image";
+
+/** The MIME types a process's kind sorts; falls back to images for an unrecognized kind (fail closed). */
+const mimeTypesForKind = (kind) => MIME_TYPES_BY_KIND[kind] ?? MIME_TYPES_BY_KIND.image;
 
 // Drive can deliver several notifications for one burst of uploads, and a user
 // can click "Organize now" mid-sweep. Collapsing concurrent sweeps per user
@@ -67,6 +75,9 @@ async function loadSweepContext(userId) {
   });
   return {
     ...entitlement,
+    userId,
+    // Reserved from per-file, so this run gets its own copy rather than sharing entitlement's.
+    credits: { ...entitlement.credits },
     processes: ranked,
     runnableIds: new Set(runnable.map((process) => process.id)),
     byRaw: new Map(runnable.map((process) => [process.raw_folder_id, process])),
@@ -74,12 +85,167 @@ async function loadSweepContext(userId) {
   };
 }
 
-/** The active process whose Raw folder directly contains this file, if it's a supported image. */
+// ---------------------------------------------------------------- deferred (grace-window) files
+
+// A Google Doc/Sheet/Slides file skipped because it was still inside the editing grace window is
+// never claimed, so the changes feed won't report it again once the page token moves past it —
+// without this, nothing would pick it up until someone clicks "Organize now". userId → Map(fileId
+// → { processId, dueAt }).
+//
+// ponytail: single-instance, in-memory — lost on restart or redeploy, and capped per user below.
+// "Organize now" is the fallback for anything dropped or never recorded. A DB-backed queue is the
+// upgrade path if that ever actually bites.
+const deferred = new Map();
+const DEFERRED_CAP_PER_USER = 500;
+// On top of the plan's grace window, so a recheck landing right on the boundary doesn't find
+// Drive still reporting the same modifiedTime.
+const DEFER_BUFFER_MS = 30_000;
+// Backoff before retrying a deferred run whose slot was busy (an ordinary sweep or "Organize now"
+// was already in progress) — short enough the file isn't stuck long, without spinning every tick.
+const DEFERRED_RETRY_MS = 30_000;
+
+const deferredTimers = new Map(); // userId → { timer, dueAt }
+
+function graceDueAt(file) {
+  const modified = Date.parse(file?.modifiedTime ?? "");
+  const base = Number.isNaN(modified) ? Date.now() : modified;
+  return base + FILE_LIMITS.editingGraceMinutes * 60_000 + DEFER_BUFFER_MS;
+}
+
+/** Records (or refreshes) a file the sweep or "Organize now" just skipped for the editing grace window. */
+function deferGraceFile(userId, process, file) {
+  let map = deferred.get(userId);
+  if (!map) deferred.set(userId, (map = new Map()));
+  if (!map.has(file.id) && map.size >= DEFERRED_CAP_PER_USER) {
+    logger.warn("Deferred-file cap reached; file stays waiting for Organize now", { userId, fileId: file.id });
+    return;
+  }
+  map.set(file.id, { processId: process.id, dueAt: graceDueAt(file) });
+  scheduleDeferredTimer(userId);
+}
+
+/**
+ * One setTimeout per user for the earliest dueAt in their map. Only replaced when an earlier
+ * dueAt arrives — a later entry just rides along with whatever's already scheduled. unref()d so a
+ * pending deferral never keeps the process alive; cleared for good by forgetUser.
+ */
+function scheduleDeferredTimer(userId) {
+  const map = deferred.get(userId);
+  if (!map || map.size === 0) return;
+
+  let earliest = Infinity;
+  for (const entry of map.values()) earliest = Math.min(earliest, entry.dueAt);
+
+  const existing = deferredTimers.get(userId);
+  if (existing && existing.dueAt <= earliest) return; // already covers this
+
+  if (existing) clearTimeout(existing.timer);
+  const timer = setTimeout(() => fireDeferredTimer(userId), Math.max(0, earliest - Date.now()));
+  timer.unref?.();
+  deferredTimers.set(userId, { timer, dueAt: earliest });
+}
+
+/** Runs the due deferred files inside the user's normal sweep slot; a busy slot reschedules rather than dropping the work. */
+async function fireDeferredTimer(userId) {
+  deferredTimers.delete(userId);
+  const ran = await runInSlot(userId, { kind: "sweep", processId: null }, () => processDeferredFiles(userId));
+  if (!ran) {
+    const timer = setTimeout(() => fireDeferredTimer(userId), DEFERRED_RETRY_MS);
+    timer.unref?.();
+    deferredTimers.set(userId, { timer, dueAt: Date.now() + DEFERRED_RETRY_MS });
+  }
+}
+
+/**
+ * Rechecks every due deferred file and either drops it (gone, trashed, moved out of Raw, or its
+ * process no longer runnable), re-defers it (still being edited), or runs it through the normal
+ * per-process queue — the same claim, credit, naming and charging path as any other file. Exported
+ * so both the per-user timer and the end of every changes sweep can call it directly.
+ */
+export async function processDeferredFiles(userId) {
+  const map = deferred.get(userId);
+  if (!map || map.size === 0) return;
+
+  const ctx = await loadSweepContext(userId);
+  if (!ctx) return; // no subscription row; leave entries for next time
+
+  const now = Date.now();
+  const due = [...map.entries()].filter(([, entry]) => entry.dueAt <= now);
+  if (due.length === 0) return scheduleDeferredTimer(userId); // fired early somehow; reschedule for the real earliest
+
+  const processesById = new Map(ctx.processes.map((process) => [process.id, process]));
+  const queues = new Map(); // process → file[]
+
+  for (const [fileId, entry] of due) {
+    map.delete(fileId); // re-added below only if it's still being edited
+
+    const process = processesById.get(entry.processId);
+    if (!process || !ctx.runnableIds.has(process.id)) continue; // process gone, disabled or locked
+
+    let fresh;
+    try {
+      fresh = await getFileMetadata(userId, fileId);
+    } catch (err) {
+      // A Drive hiccup mustn't lose the file from the queue — that's the very gap this queue closes.
+      map.set(fileId, { processId: process.id, dueAt: now + DEFERRED_RETRY_MS });
+      logger.warn("Could not recheck a deferred file; will retry", { userId, fileId, reason: err.message });
+      continue;
+    }
+    if (!fresh || fresh.trashed) continue; // gone or trashed
+    if (!(fresh.parents ?? []).includes(process.raw_folder_id)) continue; // moved out of Raw since
+
+    if (isStillBeingEdited(fresh)) {
+      map.set(fileId, { processId: process.id, dueAt: graceDueAt(fresh) });
+      continue;
+    }
+
+    let files = queues.get(process);
+    if (!files) queues.set(process, (files = []));
+    files.push(fresh);
+  }
+
+  // A file that comes back "blocked" (no credits left) was already removed above and isn't
+  // re-added here, so it just stays visible as "waiting" until "Organize now" is clicked.
+  if (queues.size > 0) {
+    await Promise.all([...queues].map(([process, files]) => runProcessQueue(userId, process, files, ctx)));
+  }
+
+  if (map.size === 0) clearDeferredTimer(userId, { andMap: true });
+  else scheduleDeferredTimer(userId);
+}
+
+/** Cancels a user's pending timer, and optionally their deferred map too. */
+function clearDeferredTimer(userId, { andMap = false } = {}) {
+  if (andMap) deferred.delete(userId);
+  const existing = deferredTimers.get(userId);
+  if (existing) clearTimeout(existing.timer);
+  deferredTimers.delete(userId);
+}
+
+/** Drops a user's deferred files and cancels their pending timer. Call when their data is gone (account deletion). */
+export function forgetUser(userId) {
+  clearDeferredTimer(userId, { andMap: true });
+}
+
+/**
+ * The active process whose Raw folder directly contains this file, if the file is one its kind
+ * sorts. A file of the wrong kind for its Raw folder's process is left alone entirely — never
+ * claimed, never counted as blocked. A Google-native file still inside the editing grace window
+ * is treated the same way here (skipped, so it stays "waiting" — see rawFolderCounts), but is also
+ * recorded in the deferred queue so it's picked up automatically once it's past the grace window,
+ * instead of waiting for "Organize now" (see deferGraceFile).
+ */
 function matchProcess(file, ctx) {
-  if (!file || file.trashed || !SUPPORTED_MIME_TYPES.includes(file.mimeType)) return null;
+  if (!file || file.trashed) return null;
   for (const parent of file.parents ?? []) {
     const process = ctx.byRaw.get(parent);
-    if (process) return process;
+    if (!process) continue;
+    if (!mimeTypesForKind(kindOf(process)).includes(file.mimeType)) return null;
+    if (isStillBeingEdited(file)) {
+      deferGraceFile(ctx.userId, process, file);
+      return null;
+    }
+    return process;
   }
   return null;
 }
@@ -106,6 +272,11 @@ const megabytes = (bytes) => `${Math.round((bytes / (1024 * 1024)) * 10) / 10} M
 
 function tooLargeMessage(bytes) {
   return `This image is ${megabytes(bytes)}, over the ${megabytes(env.gemini.maxImageBytes)} DriveTag can send to the AI.`;
+}
+
+function readOnlyMessage(kind) {
+  const noun = kind === "document" ? "document" : "image";
+  return `DriveTag can only view this ${noun}, so it can't rename or move it. Ask for Editor access to the Raw folder.`;
 }
 
 function readableMoveError(err, destination) {
@@ -146,12 +317,23 @@ function createSemaphore(max) {
 }
 const aiJobSlots = createSemaphore(env.pipeline.maxConcurrentAiJobs);
 
-/** Downloads and classifies one file. The buffer only exists between acquiring and releasing a global slot (Zero-Retention). */
+/** Downloads and classifies one image. The buffer only exists between acquiring and releasing a global slot (Zero-Retention). */
 async function classifyFile(userId, file, process) {
   await aiJobSlots.acquire();
   try {
     const buffer = await getFileBuffer(userId, file.id);
     return await classifyImage(buffer, file.mimeType, process);
+  } finally {
+    aiJobSlots.release();
+  }
+}
+
+/** Reads and classifies one document. Its bytes/text only exist between acquiring and releasing the same global slot (Zero-Retention). */
+async function classifyDocumentFile(userId, file, process) {
+  await aiJobSlots.acquire();
+  try {
+    const content = await prepareDocument(userId, file);
+    return await classifyDocument(content, process);
   } finally {
     aiJobSlots.release();
   }
@@ -190,49 +372,86 @@ async function runProcessQueue(userId, process, files, ctx) {
   });
 }
 
+/** Values for {tag:<key>} plus every image-only naming token. */
+function imageNamingValues(file, process, destination, result) {
+  return {
+    destination: destination.name,
+    subject: result.subject,
+    style: result.style,
+    genre: result.genre,
+    date: fileDateString(file, process.timezone),
+    original: file.name,
+    process: process.name,
+    tags: Object.fromEntries(result.fields.map((field) => [field.key, field.value])),
+  };
+}
+
+const DOCUMENT_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Values for {tag:<key>} plus every document-only naming token. docdate falls back to "" unless it's a real date. */
+function documentNamingValues(file, process, destination, result) {
+  return {
+    destination: destination.name,
+    type: result.type,
+    topic: result.topic,
+    organization: result.organization,
+    docdate: DOCUMENT_DATE.test(result.documentDate ?? "") ? result.documentDate : "",
+    date: fileDateString(file, process.timezone),
+    original: file.name,
+    process: process.name,
+    tags: Object.fromEntries(result.fields.map((field) => [field.key, field.value])),
+  };
+}
+
+// genre/subject/style, and type/topic/organization/document_date, stay top-level so activity rows and
+// clients can read them without knowing which kind produced them.
+const imageTags = (result) => ({ genre: result.genre, subject: result.subject, style: result.style, fields: result.fields });
+const documentTags = (result) => ({
+  type: result.type,
+  topic: result.topic,
+  organization: result.organization,
+  document_date: result.documentDate,
+  fields: result.fields,
+});
+
 async function processFile(userId, file, process, ctx) {
-  if (ctx.credits <= 0) return "blocked";
+  const kind = kindOf(process);
+  if ((ctx.credits[kind] ?? 0) <= 0) return "blocked";
   // Reserved synchronously, before any await: JS runs this function up to its first
   // await without interruption, so this check-and-decrement can't race another
   // concurrent worker's. Released below for every outcome that isn't actually charged.
-  ctx.credits -= 1;
+  ctx.credits[kind] -= 1;
 
-  const claim = await processed.claimFile(userId, file.id, file.name, process.id);
+  const claim = await processed.claimFile(userId, file.id, file.name, process.id, kind);
   if (!claim) {
-    ctx.credits += 1;
+    ctx.credits[kind] += 1;
     return "skipped";
   }
 
   try {
-    if (Number(file.size) > env.gemini.maxImageBytes) {
-      throw new Error(tooLargeMessage(Number(file.size)));
-    }
-    // A view-only image can't be renamed or moved; find out before paying for a Gemini call.
-    if (file.capabilities?.canRename === false) {
-      throw new Error("DriveTag can only view this image, so it can't rename or move it. Ask for Editor access to the Raw folder.");
+    let result;
+    if (kind === "document") {
+      // A view-only document can't be renamed or moved; find out before paying for an AI call.
+      if (file.capabilities?.canRename === false) throw new Error(readOnlyMessage(kind));
+      result = await classifyDocumentFile(userId, file, process);
+    } else {
+      if (Number(file.size) > env.gemini.maxImageBytes) {
+        throw new Error(tooLargeMessage(Number(file.size)));
+      }
+      // A view-only image can't be renamed or moved; find out before paying for a Gemini call.
+      if (file.capabilities?.canRename === false) throw new Error(readOnlyMessage(kind));
+      result = await classifyFile(userId, file, process);
     }
 
-    const result = await classifyFile(userId, file, process);
     const destination = resolveDestination(process, result.destination, ctx);
+    const values =
+      kind === "document" ? documentNamingValues(file, process, destination, result) : imageNamingValues(file, process, destination, result);
 
-    const newName = renderFileName(
-      process.rename_template,
-      {
-        destination: destination.name,
-        subject: result.subject,
-        style: result.style,
-        genre: result.genre,
-        date: fileDateString(file, process.timezone),
-        original: file.name,
-        process: process.name,
-        tags: Object.fromEntries(result.fields.map((field) => [field.key, field.value])),
-      },
-      { originalName: file.name, mimeType: file.mimeType },
-    );
+    const newName = renderFileName(process.rename_template, values, { originalName: file.name, mimeType: file.mimeType, kind });
 
     // A run slow enough to be declared stale may have been taken over; the new owner moves the file.
     if (!(await processed.holdsClaim(userId, file.id, claim))) {
-      ctx.credits += 1; // the new owner charges for this file, not us
+      ctx.credits[kind] += 1; // the new owner charges for this file, not us
       logger.warn("Claim taken over before rename; leaving the file to its new owner", { userId, fileId: file.id });
       return "skipped";
     }
@@ -247,23 +466,23 @@ async function processFile(userId, file, process, ctx) {
       throw readableMoveError(err, destination);
     }
 
-    // genre/subject/style stay top-level so older activity rows and clients read the same shape.
-    const tags = { genre: result.genre, subject: result.subject, style: result.style, fields: result.fields };
+    const tags = kind === "document" ? documentTags(result) : imageTags(result);
+    const limits = ctx.limits[kind] ?? ctx.limits.image;
     const bucket = await processed.completeFile(
       userId,
       file.id,
       claim,
       { newName, tags, destinationId: destination.id, destinationName: destination.name },
-      ctx.limits,
+      { kind, freeLimit: limits.freeLimit, monthlyLimit: limits.monthlyLimit },
     );
 
     if (!bucket) {
-      ctx.credits += 1; // nothing was charged; release the reservation
+      ctx.credits[kind] += 1; // nothing was charged; release the reservation
       logger.warn("Claim lost before recording the result", { userId, fileId: file.id, newName });
     } else if (bucket === "overage") {
       // Only reachable when two backend instances overlap mid-deploy: the local count
-      // and the database have drifted apart. Stop this run from reserving any more.
-      ctx.credits = 0;
+      // and the database have drifted apart. Stop this run from reserving any more of this kind.
+      ctx.credits[kind] = 0;
     }
     // Otherwise the reservation taken at the top of this call is exactly what was charged.
     // Custom tag values can hold client names; log only where the file went.
@@ -271,17 +490,18 @@ async function processFile(userId, file, process, ctx) {
       userId,
       fileId: file.id,
       processId: process.id,
+      kind,
       destination: destination.name,
       matched: result.matched,
       bucket,
     });
     return "completed";
   } catch (err) {
-    ctx.credits += 1; // failures are never charged; release the reservation
+    ctx.credits[kind] += 1; // failures are never charged; release the reservation
     if (!(await processed.recordFailure(userId, file.id, claim, err.message))) {
       logger.warn("Claim lost before recording the failure", { userId, fileId: file.id });
     }
-    logger.error("File processing failed", { userId, fileId: file.id, processId: process.id, reason: err.message });
+    logger.error("File processing failed", { userId, fileId: file.id, processId: process.id, kind, reason: err.message });
     return "failed";
   }
 }
@@ -312,31 +532,67 @@ function groupChangesByProcess(changes, ctx) {
   return [...byProcess].map(([process, files]) => [process, [...files.values()]]);
 }
 
+/** The kinds this run could actually process — i.e. that at least one runnable process sorts. */
+function kindsInPlay(ctx) {
+  const kinds = new Set();
+  for (const process of ctx.byRaw.values()) kinds.add(kindOf(process));
+  return kinds;
+}
+
+/**
+ * True once every kind that has a runnable process is out of credits. A run with, say, an image
+ * process out of credits and a document process that still has some is NOT exhausted: image files
+ * come back "blocked" and wait for "Organize now", while document files keep sorting.
+ */
+function allKindsExhausted(ctx) {
+  for (const kind of kindsInPlay(ctx)) {
+    if ((ctx.credits[kind] ?? 0) > 0) return false;
+  }
+  return true;
+}
+
 async function sweepChanges(channel) {
   const userId = channel.user_id;
-  const ctx = await loadSweepContext(userId);
-  if (!ctx) return;
+  try {
+    const ctx = await loadSweepContext(userId);
+    if (!ctx) return;
 
-  if (ctx.byRaw.size === 0) return fastForward(channel, "no active work processes");
-  if (ctx.credits <= 0) return fastForward(channel, "out of image credits");
-
-  let pageToken = channel.page_token;
-  while (pageToken) {
-    const page = await listChanges(userId, pageToken);
-
-    // Each matched process gets its own worker pool; different processes' pools run
-    // concurrently with each other (mapWithConcurrency caps one process's own pool).
-    const queues = groupChangesByProcess(page.changes ?? [], ctx);
-    const outcomes = (await Promise.all(queues.map(([process, files]) => runProcessQueue(userId, process, files, ctx)))).flat();
-
-    if (outcomes.includes("blocked")) return fastForward(channel, "ran out of image credits mid-sweep");
-
-    if (page.nextPageToken) {
-      pageToken = page.nextPageToken;
-    } else {
-      await channels.updatePageToken(channel.channel_id, page.newStartPageToken);
-      break;
+    if (ctx.byRaw.size === 0) {
+      await fastForward(channel, "no active work processes");
+      return;
     }
+    if (allKindsExhausted(ctx)) {
+      await fastForward(channel, "out of credits for every active process kind");
+      return;
+    }
+
+    let pageToken = channel.page_token;
+    while (pageToken) {
+      const page = await listChanges(userId, pageToken);
+
+      // Each matched process gets its own worker pool; different processes' pools run
+      // concurrently with each other (mapWithConcurrency caps one process's own pool).
+      const queues = groupChangesByProcess(page.changes ?? [], ctx);
+      await Promise.all(queues.map(([process, files]) => runProcessQueue(userId, process, files, ctx)));
+
+      if (allKindsExhausted(ctx)) {
+        await fastForward(channel, "ran out of credits for every process kind mid-sweep");
+        return;
+      }
+
+      if (page.nextPageToken) {
+        pageToken = page.nextPageToken;
+      } else {
+        await channels.updatePageToken(channel.channel_id, page.newStartPageToken);
+        break;
+      }
+    }
+  } finally {
+    // Cheap when nothing's deferred (a Map lookup); runs any deferred files that are due even if their
+    // timer hasn't fired yet. Its own failure is logged, never allowed to mask the sweep's result or error.
+    await processDeferredFiles(userId).catch((err) =>
+      logger.error("Deferred-file recheck failed", { userId, reason: err.message }),
+    );
   }
 }
 
@@ -405,7 +661,15 @@ export async function processRawFolder(userId, { processId = null, retryFailed =
     const targets = ctx.processes.filter((process) => ctx.runnableIds.has(process.id) && (!processId || process.id === processId));
     const queues = [];
     for (const process of targets) {
-      const files = dedupeById(await listImagesInFolder(userId, process.raw_folder_id, SUPPORTED_MIME_TYPES));
+      const rawFiles = dedupeById(await listFilesInFolder(userId, process.raw_folder_id, mimeTypesForKind(kindOf(process))));
+      // A Google-native file still inside the editing grace window is left alone here too: it stays
+      // in Raw, counts as "waiting" below, and is deferred the same way a sweep would (deferGraceFile)
+      // so it's picked up automatically once it's past the window, without needing another click.
+      const files = rawFiles.filter((file) => {
+        if (!isStillBeingEdited(file)) return true;
+        deferGraceFile(userId, process, file);
+        return false;
+      });
       summary.found += files.length;
       if (retryFailed) await processed.releaseFailed(userId, files.map((file) => file.id));
       queues.push([process, files]);
@@ -436,9 +700,13 @@ function invalidateStatusCache(userId) {
   }
 }
 
-/** What's in one Raw folder right now, split by whether DriveTag has touched each file. */
-async function rawFolderCounts(userId, rawFolderId) {
-  const files = await listImagesInFolder(userId, rawFolderId, SUPPORTED_MIME_TYPES);
+/**
+ * What's in one process's Raw folder right now, split by whether DriveTag has touched each file.
+ * A Google-native file inside the editing grace window has no processed_files row (matchProcess
+ * never let it be claimed), so it naturally counts as "waiting" here, same as any other new file.
+ */
+async function rawFolderCounts(userId, process) {
+  const files = await listFilesInFolder(userId, process.raw_folder_id, mimeTypesForKind(kindOf(process)));
   const statuses = await processed.getStatuses(userId, files.map((file) => file.id));
 
   const counts = { waiting: 0, processing: 0, failed: 0, total: files.length };
@@ -485,7 +753,7 @@ export async function getProcessesStatus(userId, processes) {
     if (cached && !busyHere && now - cached.at < STATUS_TTL_MS) return [process.id, cached.value];
 
     try {
-      const value = await rawFolderCounts(userId, process.raw_folder_id);
+      const value = await rawFolderCounts(userId, process);
       // Mid-run counts go stale the moment the run ends; only cache counts nothing was changing underneath.
       if (!busyHere && !isSweeping(userId) && (statusGeneration.get(userId) ?? 0) === generation) {
         statusCache.set(key, { at: now, value });

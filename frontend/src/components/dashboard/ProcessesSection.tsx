@@ -90,7 +90,7 @@ export function ProcessesSection({
             )}
           </div>
           <p className="mt-1 text-ink-soft">
-            Each process watches one Raw folder and files its images into the destinations you describe.
+            Each process watches one Raw folder and files its images or documents into the destinations you describe.
           </p>
         </div>
 
@@ -141,7 +141,7 @@ export function ProcessesSection({
           <h3 className="mb-2 text-2xl font-bold">Create your first process</h3>
           <p className="mx-auto mb-7 max-w-md leading-relaxed text-ink-soft">
             Pick a Raw folder to watch, describe where things should go, and DriveTag’s AI tags, renames and files every
-            new image for you.
+            new file for you.
           </p>
           <ButtonLink to="/processes/new" size="lg" magnetic>
             <Plus className="h-5 w-5" aria-hidden /> Create your first process

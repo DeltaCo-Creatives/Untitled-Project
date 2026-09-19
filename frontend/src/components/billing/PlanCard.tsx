@@ -1,11 +1,12 @@
 import { useId } from 'react';
-import { ArrowRight, BadgeCheck, Building, Check, Clock3, Palette, Sparkles, Sprout, Users, type LucideIcon } from 'lucide-react';
-import type { PlanId, PlanInfo } from '../../lib/api';
+import { ArrowRight, BadgeCheck, Building, Check, Clock3, Palette, PiggyBank, Sparkles, Sprout, Users, type LucideIcon } from 'lucide-react';
+import type { PlanInfo, PlanTier } from '../../lib/api';
 import { plural } from '../../lib/format';
 import { Button, ButtonLink } from '../ui/Button';
 import { PAYMENTS_PENDING_NOTE, formatPrice, isFreePlan, monthsFree, planFeatures } from './planFeatures';
 
-const ACCENTS: Record<PlanId, { icon: LucideIcon; bubble: string; check: string }> = {
+// Keyed by tier, not plan id: every family's Creator/Studio/Enterprise tier gets the same accent.
+const ACCENTS: Record<PlanTier, { icon: LucideIcon; bubble: string; check: string }> = {
   free: { icon: Sprout, bubble: 'bg-sage', check: 'bg-sage' },
   creator: { icon: Palette, bubble: 'bg-periwinkle', check: 'bg-periwinkle-soft' },
   studio: { icon: Users, bubble: 'bg-lavender', check: 'bg-lavender-soft' },
@@ -19,11 +20,13 @@ interface PlanCardProps {
   current?: boolean;
   signedIn?: boolean;
   compact?: boolean;
+  /** For an Images + Documents plan: "Save $2.99/month vs buying both", only when the saving is real. */
+  savingsNote?: string | null;
 }
 
-export function PlanCard({ plan, currency, current = false, signedIn = false, compact = false }: PlanCardProps) {
+export function PlanCard({ plan, currency, current = false, signedIn = false, compact = false, savingsNote = null }: PlanCardProps) {
   const titleId = useId();
-  const accent = ACCENTS[plan.id] ?? ACCENTS.creator;
+  const accent = ACCENTS[plan.tier] ?? ACCENTS.creator;
   const Icon = accent.icon;
   const free = isFreePlan(plan);
   const featured = plan.popular;
@@ -86,6 +89,12 @@ export function PlanCard({ plan, currency, current = false, signedIn = false, co
               </p>
             )}
           </>
+        )}
+        {savingsNote && (
+          <p className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-sage-soft px-3 py-1 text-xs font-bold text-sage-deep">
+            <PiggyBank className="h-3.5 w-3.5" aria-hidden />
+            {savingsNote}
+          </p>
         )}
       </div>
 

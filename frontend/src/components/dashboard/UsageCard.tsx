@@ -2,11 +2,9 @@ import { useRef } from 'react';
 import { CircleAlert, Gauge, Gem } from 'lucide-react';
 import type { CurrentPlan, Usage } from '../../lib/api';
 import { gsap, useGSAP, MOTION_OK } from '../../lib/gsap';
-import { formatCount, plural } from '../../lib/format';
-import { usageSummary } from '../../lib/messages';
 import { ButtonLink } from '../ui/Button';
 import { UsageMeter } from '../billing/UsageMeter';
-import { aiWorkersFeature } from '../billing/planFeatures';
+import { anyKindExhausted, planSummaryLine } from '../billing/planFeatures';
 
 interface UsageCardProps {
   plan: CurrentPlan | null;
@@ -14,10 +12,10 @@ interface UsageCardProps {
   className?: string;
 }
 
-/** The plan badge, how many images are left, and the way to more. */
+/** The plan badge, how many images and documents are left, and the way to more. */
 export function UsageCard({ plan, usage, className = '' }: UsageCardProps) {
   const ref = useRef<HTMLElement>(null);
-  const exhausted = Boolean(usage?.exhausted);
+  const exhausted = Boolean(plan && usage && anyKindExhausted(plan, usage));
 
   useGSAP(
     () => {
@@ -33,12 +31,6 @@ export function UsageCard({ plan, usage, className = '' }: UsageCardProps) {
     },
     { dependencies: [exhausted], scope: ref, revertOnUpdate: true },
   );
-
-  const allowance = plan
-    ? plan.id === 'free'
-      ? `${formatCount(plan.freeImages)} images, no time limit`
-      : `${formatCount(plan.monthlyImages)} images a month`
-    : null;
 
   return (
     <section
@@ -72,18 +64,16 @@ export function UsageCard({ plan, usage, className = '' }: UsageCardProps) {
             >
               <p className="flex items-start gap-2 font-bold">
                 <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                {usageSummary(plan, usage)}
+                You’re out of credits for at least one kind.
               </p>
-              <p className="mt-1 pl-6">New images wait safely in Raw. “Organize now” sorts them once you have images again.</p>
+              <p className="mt-1 pl-6">New files wait safely in Raw. “Organize now” sorts them once you have credits again.</p>
             </div>
           )}
-          <p className="mt-4 text-sm text-ink-soft">
-            Includes {plural(plan.maxProcesses, 'work process', 'work processes')} · {aiWorkersFeature(plan)} · {allowance}
-          </p>
+          <p className="mt-4 text-sm text-ink-soft">{planSummaryLine(plan)}</p>
         </>
       ) : (
         <p className="leading-relaxed text-ink-soft">
-          Your plan and image allowance show up here once you’ve saved your first work process.
+          Your plan and usage show up here once you’ve saved your first work process.
         </p>
       )}
 

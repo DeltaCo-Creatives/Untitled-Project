@@ -6,8 +6,11 @@ import {
   CircleAlert,
   CircleCheck,
   CirclePause,
+  FileText,
+  Files,
   FolderCheck,
   FolderInput,
+  Image as ImageIcon,
   Images,
   Info,
   LoaderCircle,
@@ -27,7 +30,7 @@ import {
   type WorkProcess,
 } from '../../lib/api';
 import { gsap, useGSAP, MOTION_OK } from '../../lib/gsap';
-import { errorMessage, isPlanLimitError, usageSummary } from '../../lib/messages';
+import { errorMessage, isPlanLimitError, kindCredits, kindPlural, kindUsageOf, kindWord, usageSummary } from '../../lib/messages';
 import { formatCount, plural } from '../../lib/format';
 import { Button, ButtonLink } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
@@ -103,6 +106,9 @@ export function ProcessCard({
   const folderError = entry && 'error' in entry ? entry.error : null;
   const waiting = counts?.waiting ?? 0;
   const failed = counts?.failed ?? 0;
+  const noun = kindWord(process.kind, 1);
+  // Usage's fields are the plural `images`/`documents`; this process's own kind picks the right one.
+  const kindUsage = usage ? kindUsageOf(usage, process.kind) : null;
 
   const regular = process.destinations.filter((destination) => !destination.isFallback);
   const fallback = process.destinations.find((destination) => destination.isFallback);
@@ -113,8 +119,8 @@ export function ProcessCard({
   const canOrganize = process.active && !organizing && !busyElsewhere && !starting && !folderError;
   const rawName = process.rawFolderName ?? 'Raw folder';
   const masterName = process.masterFolderName ?? 'Master folder';
-  // New arrivals get sorted on their own; "Organize now" is only for images that were already waiting.
-  const autoSorting = sortingActive && !usage?.exhausted;
+  // New arrivals get sorted on their own; "Organize now" is only for files that were already waiting.
+  const autoSorting = sortingActive && !kindUsage?.exhausted;
   const promoteOrganize = waiting > 0 && canOrganize && !autoSorting;
 
   // How many AI workers this process has going right now, and the plan's quiet capacity line when it's idle.
@@ -162,17 +168,17 @@ export function ProcessCard({
 
   const requestOrganize = (retryFailed: boolean) => {
     setMessage(null);
-    if (usage?.exhausted) {
+    if (kindUsage?.exhausted) {
       setMessage({
         tone: 'butter',
-        text: `${usageSummary(plan, usage)} New images wait safely in Raw until then.`,
+        text: `${usageSummary(plan, usage, process.kind)} New ${kindWord(process.kind, 2)} wait safely in Raw until then.`,
         upgrade: true,
       });
       return;
     }
     const count = waiting + (retryFailed ? failed : 0);
-    if (usage && count > usage.remaining) {
-      setPending({ retryFailed, waiting: count, remaining: usage.remaining });
+    if (kindUsage && count > kindUsage.remaining) {
+      setPending({ retryFailed, waiting: count, remaining: kindUsage.remaining });
       return;
     }
     void organize(retryFailed);
@@ -223,7 +229,7 @@ export function ProcessCard({
     { dependencies: [flowing], scope: ref, revertOnUpdate: true },
   );
 
-  // A gentle bob on the Raw icon while images wait for "Organize now".
+  // A gentle bob on the Raw icon while files wait for "Organize now".
   const waitingIdle = waiting > 0 && process.active && !organizing;
   useGSAP(
     () => {
@@ -267,13 +273,13 @@ export function ProcessCard({
       : organizing
         ? progress
           ? `Organizing… ${formatCount(progress.done)} of ${formatCount(progress.total)} done`
-          : 'Organizing images in Raw…'
+          : `Organizing ${kindWord(process.kind, 2)} in Raw…`
         : waiting > 0
-          ? `${plural(waiting, 'image', 'images')} waiting`
+          ? `${kindPlural(waiting, process.kind)} waiting`
           : counts.processing > 0
-            ? `${plural(counts.processing, 'image', 'images')} being sorted`
+            ? `${kindPlural(counts.processing, process.kind)} being sorted`
             : failed > 0
-              ? `${plural(failed, 'image', 'images')} couldn’t be sorted`
+              ? `${kindPlural(failed, process.kind)} couldn’t be sorted`
               : 'Raw folder is all clear';
 
   const statusDetail = folderError
@@ -281,7 +287,7 @@ export function ProcessCard({
     : !counts
       ? checkFailed
         ? 'DriveTag will look again on the next refresh.'
-        : 'Looking for images that haven’t been organized yet.'
+        : `Looking for ${kindWord(process.kind, 2)} that haven’t been organized yet.`
       : organizing
         ? 'Tagging, renaming and filing. You can leave this page; it keeps going.'
         : waiting > 0
@@ -290,13 +296,13 @@ export function ProcessCard({
             : !process.enabled
               ? `Sitting in ${rawName}. Switch this process on to sort them.`
               : autoSorting
-                ? `New images in ${rawName} get sorted automatically. Organize now handles ones that were already waiting.`
+                ? `New ${kindWord(process.kind, 2)} in ${rawName} get sorted automatically. Organize now handles ones that were already waiting.`
                 : `Sitting in ${rawName}, not organized yet. Nothing moves until you say so.`
           : counts.processing > 0
             ? 'Automatic sorting is working through them.'
             : failed > 0
               ? `Still in ${rawName}. Retry to give them another go.`
-              : `No unorganized images in ${rawName}.`;
+              : `No unorganized ${kindWord(process.kind, 2)} in ${rawName}.`;
 
   const disabledReason =
     organizing || folderError || process.locked
@@ -308,6 +314,12 @@ export function ProcessCard({
           : null;
 
   const badges = [
+    {
+      key: 'kind',
+      label: process.kind === 'document' ? 'Documents' : 'Images',
+      className: 'bg-lavender-soft text-ink',
+      icon: process.kind === 'document' ? FileText : ImageIcon,
+    },
     !process.enabled && { key: 'paused', label: 'Paused', className: 'bg-line text-ink-soft', icon: CirclePause },
     process.locked && { key: 'locked', label: 'Over plan limit', className: 'bg-rose text-rose-ink', icon: Lock },
     organizing && { key: 'busy', label: 'Busy', className: 'bg-butter text-ink', icon: LoaderCircle },
@@ -420,7 +432,7 @@ export function ProcessCard({
           )}
           {fallback && (
             <li
-              title="For images that fit none of the other destinations"
+              title={`For ${kindWord(process.kind, 2)} that don’t clearly fit another destination`}
               className="max-w-[12rem] truncate rounded-full border border-dashed border-line px-2.5 py-1 text-xs font-bold text-ink-soft"
             >
               {fallback.name}
@@ -475,7 +487,7 @@ export function ProcessCard({
             ) : organizing ? (
               <Sparkles className="h-5 w-5" />
             ) : waiting > 0 || counts.processing > 0 ? (
-              <Images className="h-5 w-5" />
+              process.kind === 'document' ? <Files className="h-5 w-5" /> : <Images className="h-5 w-5" />
             ) : failed > 0 ? (
               <CircleAlert className="h-5 w-5 text-rose-ink" />
             ) : (
@@ -486,7 +498,7 @@ export function ProcessCard({
             <p className={`font-bold ${folderError ? 'text-rose-ink' : ''}`}>{statusTitle}</p>
             <p className={`mt-0.5 text-sm ${folderError ? 'text-rose-ink' : 'text-ink-soft'}`}>{statusDetail}</p>
             {counts && !organizing && waiting > 0 && failed > 0 && (
-              <p className="mt-1 text-sm font-bold text-rose-ink">Plus {plural(failed, 'image', 'images')} that failed earlier.</p>
+              <p className="mt-1 text-sm font-bold text-rose-ink">Plus {kindPlural(failed, process.kind)} that failed earlier.</p>
             )}
             {showWorkerCount && (
               <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-extrabold text-ink-soft">
@@ -568,13 +580,21 @@ export function ProcessCard({
         </ButtonLink>
       </div>
       {disabledReason && <p className="mt-2 text-xs font-semibold text-ink-soft">{disabledReason}</p>}
+      {!disabledReason && kindUsage?.exhausted && (
+        <p className="mt-2 text-xs font-semibold text-ink-soft">
+          Out of {noun} credits —{' '}
+          <Link to={`/plans?family=${kindWord(process.kind, 2)}`} className={linkClass}>
+            add a pack or switch plan
+          </Link>
+        </p>
+      )}
 
       {/* Portaled: the card's entrance transform would otherwise trap the fixed-position dialog inside it. */}
       {pending &&
         createPortal(
           <ConfirmDialog
             open
-            title="Not enough images for all of them"
+            title={`Not enough ${kindWord(process.kind, 2)} for all of them`}
             tone="primary"
             confirmLabel={starting ? 'Starting…' : `Organize ${formatCount(pending.remaining)}`}
             busy={starting}
@@ -582,13 +602,13 @@ export function ProcessCard({
             onCancel={() => setPending(null)}
           >
             <p>
-              You have {plural(pending.remaining, 'image', 'images')} left. DriveTag will organize{' '}
+              You have {kindCredits(pending.remaining, process.kind)} left. DriveTag will organize{' '}
               {formatCount(pending.remaining)} of the {formatCount(pending.waiting)} waiting; the rest stay in Raw.
             </p>
             <p className="mt-3 text-sm">
               {plan?.id === 'free'
-                ? 'The rest get sorted with “Organize now” once you upgrade or add an image pack.'
-                : 'The rest get sorted with “Organize now” once your images refill or you add an image pack.'}
+                ? `The rest get sorted with “Organize now” once you upgrade or add a${process.kind === 'document' ? '' : 'n'} ${noun} pack.`
+                : `The rest get sorted with “Organize now” once your ${kindWord(process.kind, 2)} refill or you add a${process.kind === 'document' ? '' : 'n'} ${noun} pack.`}
             </p>
           </ConfirmDialog>,
           document.body,

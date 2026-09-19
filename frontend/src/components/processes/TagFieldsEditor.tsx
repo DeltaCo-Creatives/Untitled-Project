@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { Braces, Plus, Tags, Trash } from 'lucide-react';
 import type { ProcessLimits } from '../../lib/api';
+import type { ProcessKind } from '../../lib/filename';
 import { gsap, useGSAP, prefersReducedMotion } from '../../lib/gsap';
 import { Button } from '../ui/Button';
 import { TextField } from '../ui/TextField';
 import {
-  TAG_FIELD_IDEAS,
+  TAG_FIELD_IDEAS_BY_KIND,
   TAG_KEY_MAX,
   deriveTagKey,
   newTagFieldDraft,
@@ -14,6 +15,7 @@ import {
 } from './processDraft';
 
 interface TagFieldsEditorProps {
+  kind: ProcessKind;
   fields: TagFieldDraft[];
   onChange: (fields: TagFieldDraft[]) => void;
   errors: Record<string, string>;
@@ -24,8 +26,8 @@ interface TagFieldsEditorProps {
 const ICON_BUTTON =
   'rounded-xl p-2 text-ink-soft transition-colors hover:bg-rose-soft hover:text-rose-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60 disabled:cursor-not-allowed disabled:opacity-40';
 
-/** Custom tag fields the AI fills in for every image, usable in names as {tag:key}. */
-export function TagFieldsEditor({ fields, onChange, errors, limits, disabled = false }: TagFieldsEditorProps) {
+/** Custom tag fields the AI fills in for every file, usable in names as {tag:key}. */
+export function TagFieldsEditor({ kind, fields, onChange, errors, limits, disabled = false }: TagFieldsEditorProps) {
   const ref = useRef<HTMLDivElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   const latest = useRef({ fields, onChange });
@@ -39,10 +41,11 @@ export function TagFieldsEditor({ fields, onChange, errors, limits, disabled = f
     latest.current = { fields, onChange };
   });
 
+  const noun = kind === 'document' ? 'document' : 'image';
   const atLimit = fields.length >= limits.maxTagFields;
   const orderKey = fields.map((field) => field.localId).join('|');
   const usedLabels = new Set(fields.map((field) => field.label.trim().toLowerCase()));
-  const ideas = TAG_FIELD_IDEAS.filter((idea) => !usedLabels.has(idea.label.toLowerCase()));
+  const ideas = TAG_FIELD_IDEAS_BY_KIND[kind].filter((idea) => !usedLabels.has(idea.label.toLowerCase()));
 
   const measure = () => {
     if (!ref.current || prefersReducedMotion()) return;
@@ -96,7 +99,7 @@ export function TagFieldsEditor({ fields, onChange, errors, limits, disabled = f
 
   const changeLabel = (field: TagFieldDraft, label: string) => {
     if (field.keyEdited) update(field.localId, { label });
-    else update(field.localId, { label, key: deriveTagKey(label, takenKeys(field.localId)) });
+    else update(field.localId, { label, key: deriveTagKey(label, takenKeys(field.localId), kind) });
   };
 
   const changeKey = (field: TagFieldDraft, value: string) => {
@@ -108,12 +111,12 @@ export function TagFieldsEditor({ fields, onChange, errors, limits, disabled = f
   // A key left empty picks the label's key back up, instead of waiting for the next label edit.
   const settleKey = (field: TagFieldDraft) => {
     if (field.key.trim() || !field.label.trim()) return;
-    update(field.localId, { key: deriveTagKey(field.label, takenKeys(field.localId)), keyEdited: false });
+    update(field.localId, { key: deriveTagKey(field.label, takenKeys(field.localId), kind), keyEdited: false });
   };
 
   const add = (label = '', description = '') => {
     if (atLimit || disabled) return;
-    const field = newTagFieldDraft(label, description, takenKeys());
+    const field = newTagFieldDraft(label, description, takenKeys(), kind);
     measure();
     enteringId.current = field.localId;
     onChange([...fields, field]);
@@ -163,8 +166,11 @@ export function TagFieldsEditor({ fields, onChange, errors, limits, disabled = f
           </span>
           <p className="font-bold">No tag fields yet</p>
           <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-ink-soft">
-            Tag fields ask the AI for extra details about each image, like Client, Color palette or Orientation. Put
-            them in file names with {'{tag:key}'}.
+            Tag fields ask the AI for extra details about each {noun}, like {ideas
+              .slice(0, 3)
+              .map((idea) => idea.label)
+              .join(', ')}
+            . Put them in file names with {'{tag:key}'}.
           </p>
         </div>
       ) : (
@@ -228,7 +234,7 @@ export function TagFieldsEditor({ fields, onChange, errors, limits, disabled = f
                               type="button"
                               onClick={() =>
                                 update(field.localId, {
-                                  key: deriveTagKey(field.label, takenKeys(field.localId)),
+                                  key: deriveTagKey(field.label, takenKeys(field.localId), kind),
                                   keyEdited: false,
                                 })
                               }
@@ -256,7 +262,11 @@ export function TagFieldsEditor({ fields, onChange, errors, limits, disabled = f
                     label="What the AI should fill in"
                     value={field.description}
                     onChange={(event) => update(field.localId, { description: event.currentTarget.value })}
-                    placeholder="e.g. The client or brand, when a logo makes it clear"
+                    placeholder={
+                      kind === 'document'
+                        ? 'e.g. The client or vendor named on the document, when it’s clear'
+                        : 'e.g. The client or brand, when a logo makes it clear'
+                    }
                     maxChars={limits.tagDescriptionMax}
                     error={errors[`${at}.description`]}
                     disabled={disabled}

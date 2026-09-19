@@ -24,9 +24,12 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "googleapis": "^180.0.0"
+    "googleapis": "^180.0.0",
+    "mammoth": "^1.12.3",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "nodemon": "^3.1.14"
   }
 }

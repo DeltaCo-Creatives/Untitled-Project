@@ -1,6 +1,6 @@
 import { HttpError } from "../utils/httpError.js";
 import { logger } from "../utils/logger.js";
-import { isSweeping } from "./pipeline.service.js";
+import { forgetUser, isSweeping } from "./pipeline.service.js";
 import { disconnectDrive } from "./driveWatch.service.js";
 import { dropPendingGrantsForUser } from "./driveConnect.service.js";
 import { deleteAuthUser } from "../repositories/user.repo.js";
@@ -34,5 +34,7 @@ export async function deleteAccount(userId) {
   await dropPendingGrantsForUser(userId);
 
   await deleteAuthUser(userId);
+  // In-memory only: drop any Google Docs still queued for a re-check after their editing grace window.
+  forgetUser(userId);
   logger.info("Account deleted", { userId });
 }

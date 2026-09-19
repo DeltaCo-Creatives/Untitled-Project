@@ -43,8 +43,8 @@ export async function listFolders(userId, { q, parentId = "root", pageToken } = 
 
 const MAX_FOLDER_SCAN = 500;
 
-/** Supported images currently sitting directly in a folder, for on-demand organizing. */
-export async function listImagesInFolder(userId, folderId, mimeTypes) {
+/** Supported files of the given MIME types currently sitting directly in a folder, for on-demand organizing. */
+export async function listFilesInFolder(userId, folderId, mimeTypes) {
   const drive = await driveFor(userId);
   const mimeClause = mimeTypes.map((type) => `mimeType = '${type}'`).join(" or ");
   const q = `'${escapeQueryValue(folderId)}' in parents and trashed = false and (${mimeClause})`;
@@ -55,7 +55,8 @@ export async function listImagesInFolder(userId, folderId, mimeTypes) {
     const { data } = await drive.files.list(
       {
         q,
-        fields: "nextPageToken, files(id, name, mimeType, size, parents, trashed, createdTime, imageMediaMetadata(time), capabilities(canRename))",
+        fields:
+          "nextPageToken, files(id, name, mimeType, size, parents, trashed, createdTime, modifiedTime, imageMediaMetadata(time), capabilities(canRename))",
         pageSize: 100,
         orderBy: "createdTime",
         pageToken,
@@ -67,6 +68,32 @@ export async function listImagesInFolder(userId, folderId, mimeTypes) {
   } while (pageToken && files.length < MAX_FOLDER_SCAN);
 
   return files.slice(0, MAX_FOLDER_SCAN);
+}
+
+/** Alias kept for callers that predate document processes. */
+export const listImagesInFolder = listFilesInFolder;
+
+/**
+ * Current metadata for one file — the same fields the changes feed and folder listings request,
+ * so a caller rechecking a file it saw earlier (the editing-grace deferral queue) gets a
+ * directly comparable shape. Null when the file is gone (404); any other error is left to the caller.
+ */
+export async function getFileMetadata(userId, fileId) {
+  const drive = await driveFor(userId);
+  try {
+    const { data } = await drive.files.get(
+      {
+        fileId,
+        fields:
+          "id, name, mimeType, parents, size, trashed, modifiedTime, createdTime, imageMediaMetadata(time), capabilities(canRename)",
+      },
+      { timeout: REQUEST_TIMEOUT_MS },
+    );
+    return data;
+  } catch (err) {
+    if (err?.code === 404 || err?.response?.status === 404) return null;
+    throw err;
+  }
 }
 
 export async function getFolder(userId, folderId) {
@@ -189,9 +216,38 @@ export async function listChanges(userId, pageToken) {
       spaces: "drive",
       restrictToMyDrive: true,
       fields:
-        "newStartPageToken, nextPageToken, changes(fileId, removed, file(id, name, mimeType, size, parents, trashed, createdTime, imageMediaMetadata(time), capabilities(canRename)))",
+        "newStartPageToken, nextPageToken, changes(fileId, removed, file(id, name, mimeType, size, parents, trashed, createdTime, modifiedTime, imageMediaMetadata(time), capabilities(canRename)))",
     },
     { timeout: REQUEST_TIMEOUT_MS },
   );
   return data;
+}
+
+/** Readable message for Drive's export-size limit (~10MB); any other export error passes through unchanged. */
+function readableExportError(err) {
+  const reason = err?.errors?.[0]?.reason ?? err?.response?.data?.error?.errors?.[0]?.reason ?? "";
+  const message = String(err?.message ?? "");
+  if (reason === "exportSizeLimitExceeded" || /export.*(too large|size limit)/i.test(message)) {
+    return new Error("This document is too large for DriveTag to read from Google Drive (Google limits exports to 10 MB).");
+  }
+  return err;
+}
+
+/**
+ * A Google Doc/Sheet/Slides file exported as text, in memory — the returned string is
+ * the only copy and is never written to disk (Zero-Retention). Google-native files have
+ * no downloadable bytes, so this is the only way to read their content.
+ */
+export async function exportFileText(userId, fileId, exportMimeType) {
+  const drive = await driveFor(userId);
+  let data;
+  try {
+    ({ data } = await drive.files.export(
+      { fileId, mimeType: exportMimeType },
+      { responseType: "arraybuffer", timeout: REQUEST_TIMEOUT_MS },
+    ));
+  } catch (err) {
+    throw readableExportError(err);
+  }
+  return Buffer.from(data).toString("utf8");
 }

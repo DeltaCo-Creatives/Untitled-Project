@@ -20,10 +20,10 @@ import {
   Trash,
   Type,
 } from 'lucide-react';
-import { ApiError, api, type ProcessesResponse } from '../lib/api';
+import { ApiError, api, type ProcessesResponse, type ProcessKind } from '../lib/api';
 import { browserTimeZone, plural, timeAgo } from '../lib/format';
 import { gsap, useGSAP, Flip, ScrollTrigger, SplitText, MOTION_OK, prefersReducedMotion } from '../lib/gsap';
-import { errorMessage, friendlyWatchError } from '../lib/messages';
+import { errorMessage, friendlyWatchError, kindWord } from '../lib/messages';
 import { usePlans } from '../hooks/usePlans';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
@@ -63,7 +63,7 @@ type View = 'loading' | 'error' | 'not-found' | 'limit' | 'form';
  * A new process only sorts on its own while the account's Drive watch is on. The first process switches it on, as
  * onboarding does; later ones leave that choice alone and say how to turn it on. Never throws: the process is saved.
  */
-async function createdNotice(name: string, rawName: string, firstProcess: boolean) {
+async function createdNotice(name: string, rawName: string, kind: ProcessKind, firstProcess: boolean) {
   const created = `Created “${name}”.`;
   let watching: boolean | null = null;
   try {
@@ -79,8 +79,8 @@ async function createdNotice(name: string, rawName: string, firstProcess: boolea
       return `${created} ${friendlyWatchError(errorMessage(err, 'Automatic sorting couldn’t start.'))}`;
     }
   }
-  if (watching) return `${created} Drop images into “${rawName}” to see it work.`;
-  if (watching === false) return `${created} Switch on automatic sorting to sort new images, or use “Organize now”.`;
+  if (watching) return `${created} Drop ${kindWord(kind, 2)} into “${rawName}” to see it work.`;
+  if (watching === false) return `${created} Switch on automatic sorting to sort new ${kindWord(kind, 2)}, or use “Organize now”.`;
   return created;
 }
 
@@ -247,7 +247,12 @@ function ProcessEditorPage({ processId }: { processId: string | null }) {
         : await api.processes.create(input);
       const notice = processId
         ? `Saved “${saved.name}”.`
-        : await createdNotice(saved.name, saved.rawFolderName ?? draft.raw?.name ?? 'Raw', data?.processes.length === 0);
+        : await createdNotice(
+            saved.name,
+            saved.rawFolderName ?? draft.raw?.name ?? 'Raw',
+            saved.kind,
+            data?.processes.length === 0,
+          );
       navigate('/dashboard', { state: { notice } });
     } catch (err) {
       setSaving(false);
@@ -526,8 +531,8 @@ function ProcessEditorPage({ processId }: { processId: string | null }) {
                 </h1>
                 <p className="mt-2 max-w-2xl text-lg leading-relaxed text-ink-soft">
                   {process
-                    ? `Sorts images from “${process.rawFolderName ?? 'Raw'}” into “${process.masterFolderName ?? 'Master'}”.`
-                    : 'Tell DriveTag where images arrive, where they should go, and how to name them.'}
+                    ? `Sorts ${kindWord(process.kind, 2)} from “${process.rawFolderName ?? 'Raw'}” into “${process.masterFolderName ?? 'Master'}”.`
+                    : 'Tell DriveTag where files arrive, where they should go, and how to name them.'}
                 </p>
                 {process && (
                   <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold">
@@ -643,7 +648,7 @@ function ProcessEditorPage({ processId }: { processId: string | null }) {
                             Delete this process
                           </h2>
                           <p className="mt-1 text-sm leading-relaxed text-ink-soft">
-                            DriveTag stops sorting for it. Your folders and images in Google Drive stay exactly where they
+                            DriveTag stops sorting for it. Your folders and files in Google Drive stay exactly where they
                             are.
                           </p>
                         </div>
@@ -717,8 +722,8 @@ function ProcessEditorPage({ processId }: { processId: string | null }) {
         onCancel={() => setConfirmDelete(false)}
       >
         <p>
-          DriveTag stops sorting images dropped into “{process?.rawFolderName ?? 'its Raw folder'}”. Nothing in Google
-          Drive is moved or deleted.
+          DriveTag stops sorting {kindWord(process?.kind, 2)} dropped into “{process?.rawFolderName ?? 'its Raw folder'}”.
+          Nothing in Google Drive is moved or deleted.
         </p>
         {isLastProcess && <p className="mt-2">It’s your only work process, so automatic sorting will pause too.</p>}
         {deleteError && (

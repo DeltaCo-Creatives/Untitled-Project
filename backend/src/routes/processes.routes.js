@@ -23,10 +23,15 @@ router.param("id", (req, res, next, id) => {
   next();
 });
 
-function outOfImagesMessage(plan) {
-  return plan.id === "free"
-    ? `You've used all ${plan.freeImages.toLocaleString("en-US")} free images. Upgrade your plan or add an image pack to keep sorting.`
-    : "You've used this month's images. Add an image pack, or they'll refill when your next billing period starts.";
+function outOfCreditsMessage(plan, kind) {
+  const noun = kind === "document" ? "document" : "image";
+  const plural = kind === "document" ? "documents" : "images";
+  const packArticle = kind === "document" ? "a" : "an";
+  if (plan.id === "free") {
+    const freeLimit = kind === "document" ? plan.freeDocuments : plan.freeImages;
+    return `You've used all ${freeLimit.toLocaleString("en-US")} free ${plural}. Upgrade your plan or add ${packArticle} ${noun} pack to keep sorting.`;
+  }
+  return `You're out of ${noun} credits. Add ${packArticle} ${noun} pack, or they'll refill when your next billing period starts.`;
 }
 
 router.get("/", async (req, res) => {
@@ -83,8 +88,13 @@ router.post("/:id/organize", async (req, res) => {
   }
   if (!process.enabled) throw new HttpError(409, "Turn this process on first.", { code: "process_disabled" });
   if (!entitlement) throw new HttpError(402, "Connect Google Drive first.", { code: "no_plan" });
-  if (entitlement.credits <= 0) {
-    throw new HttpError(402, outOfImagesMessage(entitlement.plan), { code: "out_of_images" });
+
+  const kind = process.kind ?? "image";
+  const kindCredits = entitlement.credits[kind] ?? 0;
+  if (kindCredits <= 0) {
+    throw new HttpError(402, outOfCreditsMessage(entitlement.plan, kind), {
+      code: kind === "document" ? "out_of_documents" : "out_of_images",
+    });
   }
   if (isSweeping(userId)) {
     return res.json({ started: false, reason: "DriveTag is already organizing. Try again when it finishes." });
@@ -103,7 +113,7 @@ router.post("/:id/organize", async (req, res) => {
     logger.error("Organize now failed", { userId, processId: process.id, reason: err.message });
   });
 
-  res.status(202).json({ started: true, waiting, willProcess: Math.min(waiting, entitlement.credits) });
+  res.status(202).json({ started: true, waiting, willProcess: Math.min(waiting, kindCredits) });
 });
 
 export default router;

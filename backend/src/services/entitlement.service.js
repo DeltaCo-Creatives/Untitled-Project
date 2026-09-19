@@ -12,17 +12,34 @@ export function effectivePlan(usage) {
   return PAID_STATUSES.has(usage.status) ? plan : PLANS.free;
 }
 
-/** What complete_processed_file needs to decide which bucket pays for an image. */
+/** What complete_processed_file_v2 needs to decide which bucket pays for a file, per kind. */
 export function limitsFor(plan) {
-  return { freeLimit: plan.freeImages, monthlyLimit: plan.monthlyImages };
+  return {
+    image: { freeLimit: plan.freeImages, monthlyLimit: plan.monthlyImages },
+    document: { freeLimit: plan.freeDocuments, monthlyLimit: plan.monthlyDocuments },
+  };
 }
 
-/** Images this user can still have sorted: free leftover + this period's leftover + top-up balance. */
+/** Free leftover + this period's leftover + top-up balance, for one kind's three buckets. */
+function remainingFor(freeUsed, freeLimit, periodUsed, periodLimit, topupBalance) {
+  const free = Math.max(0, freeLimit - (freeUsed ?? 0));
+  const monthly = Math.max(0, periodLimit - (periodUsed ?? 0));
+  return free + monthly + Math.max(0, topupBalance ?? 0);
+}
+
+/** Files this user can still have sorted, per kind: free leftover + this period's leftover + top-up balance. */
 export function remainingCredits(usage, plan) {
-  if (!usage) return 0;
-  const free = Math.max(0, plan.freeImages - (usage.free_images_used ?? 0));
-  const monthly = Math.max(0, plan.monthlyImages - (usage.period_images_used ?? 0));
-  return free + monthly + Math.max(0, usage.topup_balance ?? 0);
+  if (!usage) return { image: 0, document: 0 };
+  return {
+    image: remainingFor(usage.free_images_used, plan.freeImages, usage.period_images_used, plan.monthlyImages, usage.topup_balance),
+    document: remainingFor(
+      usage.free_documents_used,
+      plan.freeDocuments,
+      usage.period_documents_used,
+      plan.monthlyDocuments,
+      usage.document_topup_balance,
+    ),
+  };
 }
 
 /**
@@ -46,5 +63,6 @@ export async function loadEntitlement(userId) {
 
   const plan = effectivePlan(usage);
   const credits = remainingCredits(usage, plan);
-  return { plan, usage, limits: limitsFor(plan), credits, exhausted: credits <= 0 };
+  // Exhausted only when neither kind can sort anything; a process of the other kind still runs.
+  return { plan, usage, limits: limitsFor(plan), credits, exhausted: credits.image <= 0 && credits.document <= 0 };
 }

@@ -12,10 +12,10 @@ const ACCENTS: { icon: LucideIcon; bubble: string }[] = [
 ];
 
 interface TopupPacksProps {
+  /** Document packs are mapped onto this same shape (`images` holds the document count) by the caller. */
   packs: TopupPack[];
   currency: string;
-  /** false while no payment provider is integrated: purchase buttons show "Coming soon" instead. */
-  /** What each unit in the pack is — "image" (default) or "document". */
+  /** What each unit in the pack is — "image" (default) or "document". Purchase buttons always show "Coming soon": no payment provider is integrated yet. */
   unitLabel?: string;
   className?: string;
 }
@@ -72,7 +72,7 @@ export function TopupPacks({ packs, currency, unitLabel = 'image', className = '
             <span className={`pack-icon mb-4 flex h-12 w-12 items-center justify-center rounded-2xl ${accent.bubble} shadow-soft`}>
               <Icon className="h-6 w-6 text-ink" aria-hidden />
             </span>
-            <h3 className="text-2xl font-semibold tracking-tight">{packLabel(pack, unitLabel)}</h3>
+            <h3 className="text-2xl font-semibold tracking-tight">{packLabel(pack.images, unitLabel)}</h3>
             <p className="mt-1 font-display text-xl font-bold text-ink">{formatPrice(pack.price, currency)}</p>
             {unitPrice && <p className="mt-0.5 text-xs font-bold text-ink-soft">{unitPrice}</p>}
             <p className="mb-6 mt-3 text-sm leading-relaxed text-ink-soft">Never expire · used after your plan’s allowance</p>
@@ -82,7 +82,7 @@ export function TopupPacks({ packs, currency, unitLabel = 'image', className = '
                   variant="secondary"
                   className="w-full"
                   title={PAYMENTS_PENDING_NOTE}
-                  aria-label={`Buy ${packLabel(pack, unitLabel)}: coming soon`}
+                  aria-label={`Buy ${packLabel(pack.images, unitLabel)}: coming soon`}
                 >
                   <Clock3 className="h-4 w-4" aria-hidden />
                   Coming soon

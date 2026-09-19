@@ -27,6 +27,9 @@ const disconnectDrive = mock.fn(async (userId) => {
 const dropPendingGrantsForUser = mock.fn(async () => {
   calls.push("dropPendingGrantsForUser");
 });
+const forgetUser = mock.fn(() => {
+  calls.push("forgetUser");
+});
 const deleteAuthUser = mock.fn(async (userId) => {
   calls.push("deleteAuthUser");
   return deleteAuthUserImpl(userId);
@@ -48,6 +51,7 @@ mock.module("../src/middleware/requireAuth.js", {
 mock.module("../src/services/pipeline.service.js", {
   namedExports: {
     isSweeping: () => sweeping,
+    forgetUser,
   },
 });
 
@@ -141,6 +145,9 @@ test("happy path: disconnects Drive then deletes the auth user, in order", async
   );
   assert.equal(disconnectDrive.mock.calls[0].arguments[0], "u1");
   assert.equal(deleteAuthUser.mock.calls[0].arguments[0], "u1");
+  // The in-memory deferred-file queue is cleared too, after the data is gone.
+  assert.deepEqual(calls.slice(-2), ["deleteAuthUser", "forgetUser"]);
+  assert.equal(forgetUser.mock.calls.at(-1).arguments[0], "u1");
 });
 
 test("deletion still happens when disconnectDrive throws (Google revoke failing must not block it)", async () => {

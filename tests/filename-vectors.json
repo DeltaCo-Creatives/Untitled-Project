@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared by backend/src/utils/filename.js and frontend/src/lib/filename.ts. Both must produce exactly these results.",
+  "_comment": "Shared by backend/src/utils/filename.js and frontend/src/lib/filename.ts. Both must produce exactly these results. Every vector may set \"kind\": \"image\" | \"document\"; omitting it means \"image\", so every vector written before document processes existed still means what it always did. A render vector's \"values\" may hold either kind's fields (see NameValues); render never validates a token, it just looks the value up, so unused-kind fields are simply ignored. A validate vector may set \"message\": when present, that exact string must appear somewhere in validateTemplate's returned error array (there may be others), used to pin down the cross-kind hint and the per-kind \"add a token\" hint wording.",
   "render": [
     {
       "name": "legacy template keeps today's names",
@@ -153,6 +153,78 @@
       "originalName": ".hidden",
       "mimeType": "image/png",
       "expected": "dog.png"
+    },
+    {
+      "name": "document: the default template names type, organization and topic",
+      "template": "{type}_{organization}_{topic}",
+      "values": { "type": "Invoice", "organization": "Acme Corp", "topic": "March renewal" },
+      "originalName": "invoice.pdf",
+      "mimeType": "application/pdf",
+      "kind": "document",
+      "expected": "invoice_acme-corp_march-renewal.pdf"
+    },
+    {
+      "name": "document: a docx keeps its extension",
+      "template": "{type}_{topic}",
+      "values": { "type": "Contract", "topic": "Vendor Agreement" },
+      "originalName": "Vendor Agreement.docx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "kind": "document",
+      "expected": "contract_vendor-agreement.docx"
+    },
+    {
+      "name": "document: a Google Doc keeps no extension",
+      "template": "{type}_{topic}",
+      "values": { "type": "Meeting", "topic": "Roadmap Notes" },
+      "originalName": "Roadmap Notes",
+      "mimeType": "application/vnd.google-apps.document",
+      "kind": "document",
+      "expected": "meeting_roadmap-notes"
+    },
+    {
+      "name": "document: an empty organization drops its separator",
+      "template": "{type}_{organization}_{topic}",
+      "values": { "type": "Invoice", "organization": "", "topic": "March" },
+      "originalName": "doc.pdf",
+      "mimeType": "application/pdf",
+      "kind": "document",
+      "expected": "invoice_march.pdf"
+    },
+    {
+      "name": "document: docdate renders like any other token",
+      "template": "{type}_{docdate}",
+      "values": { "type": "Invoice", "docdate": "2026-03-01" },
+      "originalName": "x.pdf",
+      "mimeType": "application/pdf",
+      "kind": "document",
+      "expected": "invoice_2026-03-01.pdf"
+    },
+    {
+      "name": "document: date is shared with image processes",
+      "template": "{type}_{date}",
+      "values": { "type": "Invoice", "date": "2026-09-19" },
+      "originalName": "x.pdf",
+      "mimeType": "application/pdf",
+      "kind": "document",
+      "expected": "invoice_2026-09-19.pdf"
+    },
+    {
+      "name": "document: a custom tag field",
+      "template": "{tag:client}_{type}",
+      "values": { "type": "Invoice", "tags": { "client": "Acme Co." } },
+      "originalName": "x.pdf",
+      "mimeType": "application/pdf",
+      "kind": "document",
+      "expected": "acme-co_invoice.pdf"
+    },
+    {
+      "name": "document: everything empty falls back to document",
+      "template": "{organization}-{type}",
+      "values": { "organization": "", "type": "", "topic": "   " },
+      "originalName": "noext",
+      "mimeType": "application/pdf",
+      "kind": "document",
+      "expected": "document.pdf"
     }
   ],
   "validate": [
@@ -165,6 +237,40 @@
     { "template": "{subject", "tagKeys": [], "valid": false },
     { "template": "subject}", "tagKeys": [], "valid": false },
     { "template": "{subject}/{style}", "tagKeys": [], "valid": false },
-    { "template": "", "tagKeys": [], "valid": false }
+    { "template": "", "tagKeys": [], "valid": false },
+    { "template": "{destination}_{subject}", "tagKeys": [], "kind": "image", "valid": true },
+    {
+      "template": "no tokens here",
+      "tagKeys": [],
+      "kind": "image",
+      "valid": false,
+      "message": "Add at least one token, like {subject}, so files don't all get the same name."
+    },
+    { "template": "{type}_{organization}_{topic}", "tagKeys": [], "kind": "document", "valid": true },
+    { "template": "{topic}_{tag:client}", "tagKeys": ["client"], "kind": "document", "valid": true },
+    { "template": "{docdate}_{type}", "tagKeys": [], "kind": "document", "valid": true },
+    { "template": "{topic}_{tag:client}", "tagKeys": [], "kind": "document", "valid": false },
+    {
+      "template": "no tokens here",
+      "tagKeys": [],
+      "kind": "document",
+      "valid": false,
+      "message": "Add at least one token, like {topic}, so files don't all get the same name."
+    },
+    {
+      "template": "{genre}",
+      "tagKeys": [],
+      "kind": "document",
+      "valid": false,
+      "message": "{genre} is an image token; document processes use {type}, {topic} or {organization}."
+    },
+    {
+      "template": "{type}",
+      "tagKeys": [],
+      "kind": "image",
+      "valid": false,
+      "message": "{type} is a document token; image processes use {subject}, {style} or {genre}."
+    },
+    { "template": "{subjct}", "tagKeys": [], "kind": "document", "valid": false }
   ]
 }

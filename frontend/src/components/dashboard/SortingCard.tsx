@@ -29,6 +29,10 @@ export function SortingCard({ me, status, latest, onChanged, className = '' }: S
   const canStart = active > 0;
   const syncing = Boolean(status?.syncing);
   const busyWorkers = status?.workers ? Object.values(status.workers).reduce((sum, n) => sum + n, 0) : 0;
+  // Only names the kind(s) that actually ran out, so an account that only sorts one kind never hears about the other.
+  const exhaustedKinds = [me.usage?.images?.exhausted && 'images', me.usage?.documents?.exhausted && 'documents']
+    .filter(Boolean)
+    .join(' and ');
 
   const watchCopy: Record<WatchState, { title: string; detail: string | null }> = {
     live: {
@@ -44,10 +48,10 @@ export function SortingCard({ me, status, latest, onChanged, className = '' }: S
         : 'Set AUTO_SYNC_INTERVAL_SECONDS on the backend, or pause and restart once webhooks are set up.',
     },
     expired: {
-      title: 'Watch expired — new images aren’t being picked up',
+      title: 'Watch expired — new files aren’t being picked up',
       detail: 'Turn automatic sorting on again to restart it.',
     },
-    off: { title: 'Paused — new images won’t be sorted', detail: null },
+    off: { title: 'Paused — new files won’t be sorted', detail: null },
   };
 
   const toggle = async (next: boolean) => {
@@ -151,7 +155,7 @@ export function SortingCard({ me, status, latest, onChanged, className = '' }: S
         {syncing && (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-butter-soft px-3 py-1 text-xs font-bold">
             <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
-            {status?.kind === 'organize' ? 'Organizing now' : 'Sorting new images'}
+            {status?.kind === 'organize' ? 'Organizing now' : 'Sorting new files'}
           </span>
         )}
         {busyWorkers > 0 && (
@@ -165,14 +169,14 @@ export function SortingCard({ me, status, latest, onChanged, className = '' }: S
           to the DOM only once syncing starts isn't announced consistently. */}
       <p className="sr-only" aria-live="polite">
         {[
-          syncing ? (status?.kind === 'organize' ? 'Organizing now.' : 'Sorting new images.') : '',
+          syncing ? (status?.kind === 'organize' ? 'Organizing now.' : 'Sorting new files.') : '',
           busyWorkers > 0 ? `${plural(busyWorkers, 'AI worker', 'AI workers')} sorting.` : '',
         ]
           .filter(Boolean)
           .join(' ')}
       </p>
       <p className="mt-3 text-sm leading-relaxed text-ink-soft">
-        One Google Drive watch covers all your work processes. Images dropped into the Raw folder of any process that’s
+        One Google Drive watch covers all your work processes. Files dropped into the Raw folder of any process that’s
         switched on get tagged, renamed and filed.
       </p>
 
@@ -193,10 +197,10 @@ export function SortingCard({ me, status, latest, onChanged, className = '' }: S
           No work process is switched on, so nothing is being sorted right now.
         </p>
       )}
-      {sortingActive && canStart && me.usage?.exhausted && (
+      {sortingActive && canStart && exhaustedKinds && (
         <p className="mt-4 flex items-start gap-2 rounded-2xl bg-butter-soft px-4 py-3 text-sm font-semibold">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-ink-soft" aria-hidden />
-          You’re out of images, so new ones wait in Raw. “Organize now” sorts them once you have more.
+          You’re out of {exhaustedKinds}, so new ones wait in Raw. “Organize now” sorts them once you have more.
         </p>
       )}
 
@@ -220,7 +224,7 @@ export function SortingCard({ me, status, latest, onChanged, className = '' }: S
             </div>
           ) : (
             <p className="mt-1.5 text-sm text-ink-soft">
-              Nothing yet — drop an image into a Raw folder and it’ll appear here.
+              Nothing yet — drop a file into a Raw folder and it’ll appear here.
             </p>
           )}
         </div>

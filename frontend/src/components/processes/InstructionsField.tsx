@@ -1,9 +1,11 @@
 import { useLayoutEffect, useRef, type MouseEvent } from 'react';
 import { Check, Lightbulb, Plus } from 'lucide-react';
+import type { ProcessKind } from '../../lib/filename';
 import { gsap, useGSAP, prefersReducedMotion } from '../../lib/gsap';
 import { TextArea } from '../ui/TextField';
 
 interface InstructionsFieldProps {
+  kind: ProcessKind;
   value: string;
   onChange: (value: string) => void;
   maxChars: number;
@@ -11,14 +13,27 @@ interface InstructionsFieldProps {
   disabled?: boolean;
 }
 
-const SUGGESTIONS = [
-  'Photos with people in them go to Lifestyle, even when a product is visible.',
-  'Keep subjects to two or three plain words, without brand names.',
-  'Screenshots and scanned documents always go to Unsorted.',
-];
+const SUGGESTIONS_BY_KIND: Record<ProcessKind, string[]> = {
+  image: [
+    'Photos with people in them go to Lifestyle, even when a product is visible.',
+    'Keep subjects to two or three plain words, without brand names.',
+    'Screenshots and scanned documents always go to Unsorted.',
+  ],
+  document: [
+    'Invoices without a client name go to Unsorted.',
+    'Keep the topic to a few plain words, without abbreviations.',
+    'Scans that are too blurry to read go to Unsorted.',
+  ],
+};
+
+const PLACEHOLDER_BY_KIND: Record<ProcessKind, string> = {
+  image: 'e.g. Anything with our mascot goes to Characters, even if it’s on a product.',
+  document: 'e.g. Invoices from Acme always go to Contracts, even without a PO number.',
+};
 
 /** Free-text guidance for the AI, with a few examples to start from. */
-export function InstructionsField({ value, onChange, maxChars, error, disabled = false }: InstructionsFieldProps) {
+export function InstructionsField({ kind, value, onChange, maxChars, error, disabled = false }: InstructionsFieldProps) {
+  const SUGGESTIONS = SUGGESTIONS_BY_KIND[kind];
   const ref = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollToEnd = useRef(false);
@@ -56,8 +71,8 @@ export function InstructionsField({ value, onChange, maxChars, error, disabled =
           onChange={(event) => onChange(event.currentTarget.value)}
           rows={5}
           maxChars={maxChars}
-          placeholder="e.g. Anything with our mascot goes to Characters, even if it’s on a product."
-          hint="Plain language is perfect. The AI follows these when it tags images and picks destinations."
+          placeholder={PLACEHOLDER_BY_KIND[kind]}
+          hint={`Plain language is perfect. The AI follows these when it tags ${kind === 'document' ? 'documents' : 'images'} and picks destinations.`}
           error={error}
           disabled={disabled}
         />

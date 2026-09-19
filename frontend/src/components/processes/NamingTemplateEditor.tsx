@@ -1,13 +1,14 @@
 import { useId, useLayoutEffect, useRef, type MouseEvent, type PointerEvent, type SyntheticEvent } from 'react';
-import { Eye, FileImage, Info, RotateCcw } from 'lucide-react';
+import { Eye, FileImage, FileText, Info, RotateCcw } from 'lucide-react';
 import type { ProcessLimits } from '../../lib/api';
-import { TEMPLATE_TOKENS, renderFileName, validateTemplate } from '../../lib/filename';
+import { TEMPLATE_TOKENS_BY_KIND, renderFileName, validateTemplate, type ProcessKind } from '../../lib/filename';
 import { todayString } from '../../lib/format';
 import { gsap, useGSAP, prefersReducedMotion } from '../../lib/gsap';
 import { TextField } from '../ui/TextField';
-import { DEFAULT_TEMPLATE, UNSORTED_NAME, isUsableTagKey } from './processDraft';
+import { DEFAULT_TEMPLATE_BY_KIND, UNSORTED_NAME, isUsableTagKey } from './processDraft';
 
 interface NamingTemplateEditorProps {
+  kind: ProcessKind;
   template: string;
   onChange: (template: string) => void;
   tagFields: { key: string; label: string }[];
@@ -22,20 +23,38 @@ interface NamingTemplateEditorProps {
   disabled?: boolean;
 }
 
-const TOKEN_INFO: Record<string, string> = {
-  destination: 'Destination name',
-  subject: 'Main subject',
-  style: 'Visual style',
-  genre: 'Broad category',
-  date: 'Date taken, or added to Drive',
-  original: 'Original file name',
-  process: 'Process name',
+const TOKEN_INFO_BY_KIND: Record<ProcessKind, Record<string, string>> = {
+  image: {
+    destination: 'Destination name',
+    subject: 'Main subject',
+    style: 'Visual style',
+    genre: 'Broad category',
+    date: 'Date taken, or added to Drive',
+    original: 'Original file name',
+    process: 'Process name',
+  },
+  document: {
+    destination: 'Destination name',
+    type: 'Document type',
+    topic: 'What it’s about',
+    organization: 'Company or person',
+    docdate: 'Date on the document',
+    date: 'Date added to Raw',
+    original: 'Original file name',
+    process: 'Process name',
+  },
 };
 
-const SAMPLES = [
+const IMAGE_SAMPLES = [
   { subject: 'coffee cup', style: 'flat lay', genre: 'product', original: 'IMG_2041.jpg', tags: ['acme', 'warm'] },
   { subject: 'acme wordmark', style: 'minimal', genre: 'branding', original: 'logo-final-v3.png', tags: ['acme', 'cool'] },
   { subject: 'city skyline', style: 'long exposure', genre: 'landscape', original: 'DSC_0087.jpg', tags: ['', 'warm'] },
+];
+
+const DOCUMENT_SAMPLES = [
+  { type: 'invoice', topic: 'q3 hosting', organization: 'acme', docdate: '2026-07-01', original: 'invoice-2207.pdf', tags: ['acme', 'finance'] },
+  { type: 'contract', topic: 'vendor nda', organization: 'globex', docdate: '2026-05-12', original: 'Scan_0091.pdf', tags: ['globex', 'legal'] },
+  { type: 'report', topic: 'quarterly review', organization: '', docdate: '', original: 'Q3 review.docx', tags: ['', 'internal'] },
 ];
 
 const CHIP =
@@ -43,6 +62,7 @@ const CHIP =
 
 /** The rename template: a text field, tokens that insert at the caret, and a live preview. */
 export function NamingTemplateEditor({
+  kind,
   template,
   onChange,
   tagFields,
@@ -61,43 +81,73 @@ export function NamingTemplateEditor({
   const previousNames = useRef<string[] | null>(null);
   const chipsLabelId = useId();
 
+  const tokens = TEMPLATE_TOKENS_BY_KIND[kind];
+  const tokenInfo = TOKEN_INFO_BY_KIND[kind];
+  const defaultTemplate = DEFAULT_TEMPLATE_BY_KIND[kind];
+  const RowIcon = kind === 'document' ? FileText : FileImage;
+  const noun = kind === 'document' ? 'document' : 'image';
+
   const usableTags = tagFields
     .map((field) => ({ key: field.key.trim().toLowerCase(), label: field.label.trim() }))
-    .filter((field, index, all) => isUsableTagKey(field.key) && all.findIndex((other) => other.key === field.key) === index);
+    .filter((field, index, all) => isUsableTagKey(field.key, kind) && all.findIndex((other) => other.key === field.key) === index);
   const tagKeys = tagFields.map((field) => field.key.trim().toLowerCase());
 
   const problems =
     template.trim().length > limits.templateMax
       ? [`Keep the naming template under ${limits.templateMax} characters.`]
-      : validateTemplate(template.trim(), tagKeys);
+      : validateTemplate(template.trim(), tagKeys, kind);
   const shownError = problems[0] ?? error ?? null;
 
   // ---------------------------------------------------------------- preview
 
   const today = todayString();
   const regularNames = destinationNames.map((name) => name.trim()).filter(Boolean);
-  const pool = regularNames.length > 0 ? regularNames : ['Product shots', 'Logos'];
-  const examples = SAMPLES.map((sample, index) => {
-    const destination = index === SAMPLES.length - 1 ? fallbackName.trim() || UNSORTED_NAME : pool[index % pool.length];
-    const tags = Object.fromEntries(
-      usableTags.map((field, fieldIndex) => [field.key, sample.tags[fieldIndex % sample.tags.length]]),
-    );
-    const fileName = renderFileName(
-      template,
-      {
-        destination,
-        subject: sample.subject,
-        style: sample.style,
-        genre: sample.genre,
-        date: today,
-        original: sample.original,
-        process: processName.trim() || 'My process',
-        tags,
-      },
-      { originalName: sample.original },
-    );
-    return { destination, original: sample.original, fileName };
-  });
+  const pool = regularNames.length > 0 ? regularNames : kind === 'document' ? ['Invoices', 'Contracts'] : ['Product shots', 'Logos'];
+  const process = processName.trim() || 'My process';
+  const destinationFor = (index: number, total: number) =>
+    index === total - 1 ? fallbackName.trim() || UNSORTED_NAME : pool[index % pool.length];
+  const tagsFor = (sampleTags: string[]) =>
+    Object.fromEntries(usableTags.map((field, fieldIndex) => [field.key, sampleTags[fieldIndex % sampleTags.length]]));
+
+  const examples =
+    kind === 'document'
+      ? DOCUMENT_SAMPLES.map((sample, index) => {
+          const destination = destinationFor(index, DOCUMENT_SAMPLES.length);
+          const fileName = renderFileName(
+            template,
+            {
+              destination,
+              type: sample.type,
+              topic: sample.topic,
+              organization: sample.organization,
+              docdate: sample.docdate,
+              date: today,
+              original: sample.original,
+              process,
+              tags: tagsFor(sample.tags),
+            },
+            { originalName: sample.original, kind },
+          );
+          return { destination, original: sample.original, fileName };
+        })
+      : IMAGE_SAMPLES.map((sample, index) => {
+          const destination = destinationFor(index, IMAGE_SAMPLES.length);
+          const fileName = renderFileName(
+            template,
+            {
+              destination,
+              subject: sample.subject,
+              style: sample.style,
+              genre: sample.genre,
+              date: today,
+              original: sample.original,
+              process,
+              tags: tagsFor(sample.tags),
+            },
+            { originalName: sample.original, kind },
+          );
+          return { destination, original: sample.original, fileName };
+        });
   const previewKey = examples.map((example) => example.fileName).join('\n');
 
   // Nudge the preview rows whose name just changed.
@@ -184,7 +234,7 @@ export function NamingTemplateEditor({
 
   const reset = () => {
     selection.current = null;
-    onChange(DEFAULT_TEMPLATE);
+    onChange(defaultTemplate);
   };
 
   return (
@@ -215,27 +265,27 @@ export function NamingTemplateEditor({
           <p id={chipsLabelId} className="text-xs font-extrabold uppercase tracking-wider text-ink-soft">
             Insert a token
           </p>
-          {template !== DEFAULT_TEMPLATE && (
+          {template !== defaultTemplate && (
             <button
               type="button"
               onClick={reset}
               disabled={disabled}
               className="inline-flex items-center gap-1 rounded-lg px-1 text-xs font-bold text-ink-soft underline underline-offset-2 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60 disabled:opacity-60"
             >
-              <RotateCcw className="h-3.5 w-3.5" /> Reset to {DEFAULT_TEMPLATE}
+              <RotateCcw className="h-3.5 w-3.5" /> Reset to {defaultTemplate}
             </button>
           )}
         </div>
         <div role="group" aria-labelledby={chipsLabelId} className="flex flex-wrap gap-2">
-          {TEMPLATE_TOKENS.map((token) => (
+          {tokens.map((token) => (
             <button
               key={token}
               type="button"
               {...chipHandlers}
               onClick={(event) => handleChip(event, `{${token}}`)}
               disabled={disabled}
-              title={TOKEN_INFO[token]}
-              aria-label={`Insert {${token}}: ${TOKEN_INFO[token] ?? token}`}
+              title={tokenInfo[token]}
+              aria-label={`Insert {${token}}: ${tokenInfo[token] ?? token}`}
               className={`${CHIP} border-line bg-lavender-soft hover:border-lavender`}
             >
               {`{${token}}`}
@@ -269,7 +319,7 @@ export function NamingTemplateEditor({
               className="flex min-w-0 flex-col gap-1 rounded-2xl bg-white px-3.5 py-2.5 shadow-soft sm:flex-row sm:items-center sm:gap-3"
             >
               <span className="flex min-w-0 items-center gap-2">
-                <FileImage aria-hidden className="h-4 w-4 shrink-0 text-lavender-deep" />
+                <RowIcon aria-hidden className="h-4 w-4 shrink-0 text-lavender-deep" />
                 <span data-preview-name className="block min-w-0 font-mono text-sm font-bold text-ink [overflow-wrap:anywhere]">
                   {example.fileName}
                 </span>
@@ -290,7 +340,7 @@ export function NamingTemplateEditor({
       {existing && (
         <p className="flex items-start gap-2 rounded-2xl bg-periwinkle-soft px-4 py-3 text-xs font-semibold leading-relaxed text-ink">
           <Info aria-hidden className="mt-px h-3.5 w-3.5 shrink-0" />
-          Changing the template only affects images sorted from now on.
+          Changing the template only affects {noun}s sorted from now on.
         </p>
       )}
     </div>

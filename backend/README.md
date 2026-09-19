@@ -5,9 +5,11 @@ Node.js + Express 5 (ESM) API that runs DriveTag AI's two loops:
 - **Loop A (onboarding):** a Google Drive OAuth grant separate from Supabase login, folder browsing, work-process CRUD, and Drive watch-channel lifecycle.
 - **Loop B (pipeline):** Drive webhook (or polling) → changes-feed sweep → per-process AI worker pool → Gemini classification → naming template → rename/move in Drive → atomic credit charge.
 
-**Zero-Retention:** an incoming image is downloaded into memory, sent to Gemini as inline base64 data (never the Files API, which would retain the upload), and discarded the moment the Drive rename/move completes. No code path writes an image to disk, a database column, or a storage bucket — only filenames, tags and destination names are ever stored (`processed_files`).
+Work processes come in two **kinds**, fixed at creation and never changed afterwards: `image` (photos, logos, graphics — the original release) and `document` (PDF, Word, Google Docs/Sheets/Slides, plain text/Markdown/CSV — added in this release). A Raw folder belongs to exactly one process, and a process only ever claims files of its own kind.
 
-**State:** live and production-ready. The full Drive loop (connect → watch → classify → rename/move → meter) runs end to end on `https://drivetag-ai.com` / `https://api.drivetag-ai.com`.
+**Zero-Retention:** an incoming image or document is read into memory, sent to Gemini as inline data (never the Files API, which would retain the upload), and discarded the moment the Drive rename/move completes. No code path writes a file to disk, a database column, or a storage bucket — only filenames, tags and destination names are ever stored (`processed_files`).
+
+**State:** live and production-ready, including the document pipeline added in this release. **Migration `0004_documents.sql` must be run by hand in the Supabase SQL editor before this release's code is deployed** — see [DeveloperToDo.md §1](../DeveloperToDo.md#1-ship-the-documents-release--order-matters) for the owner's exact steps and [§3](#3-database) below for what it does. The full Drive loop (connect → watch → classify → rename/move → meter) runs end to end on `https://drivetag-ai.com` / `https://api.drivetag-ai.com`.
 
 For architecture, the full non-obvious-design-decisions list, and conventions, see **[../CLAUDE.md](../CLAUDE.md)** — this document doesn't repeat that reasoning, only the concrete setup/operations facts. For the web app, see **[../frontend/README.md](../frontend/README.md)**.
 
@@ -54,7 +56,7 @@ Every variable [src/config/env.js](src/config/env.js) reads. "Required" means `n
 |---|---|---|---|---|
 | `GEMINI_API_KEY` | Yes | Yes | — | Gemini Flash API key for image classification |
 | `GEMINI_MODEL` | No | No | `gemini-3.6-flash` | Model id. Google retired `gemini-2.5-flash` for new users; a stale `.env` value silently overrides the default and 404s |
-| `MAX_IMAGE_BYTES` | No | No | `18874368` (18 MB) | Ceiling on one image sent inline to Gemini; larger files are skipped with a readable error rather than failing the whole sweep |
+| `MAX_IMAGE_BYTES` | No | No | `18874368` (18 MB) | Ceiling on one image sent inline to Gemini; larger files are skipped with a readable error rather than failing the whole sweep. Also caps a PDF's first-5-pages data after trimming (`document.service.js`'s `preparePdf`) — a document's own 20 MB pre-download limit is separate, in `FILE_LIMITS.documentMaxMb` ([§5](#5-how-sorting-works)) |
 | `MAX_CONCURRENT_AI_JOBS` | No | No | `20` | Server-wide FIFO cap on simultaneous download+classify jobs, across every user's sweep and "Organize now" ([src/services/pipeline.service.js](src/services/pipeline.service.js)). Each in-flight job can hold up to `MAX_IMAGE_BYTES` of image data in memory — size this against the instance's RAM (e.g. 20 × 18 MB ≈ 360 MB worst case), not just Gemini's rate limit |
 | `GOOGLE_CLIENT_ID` | Yes | Semi-public | — | OAuth client, from Google Cloud Console |
 | `GOOGLE_CLIENT_SECRET` | Yes | Yes | — | OAuth client secret |
@@ -110,8 +112,9 @@ Schema source of truth: [`../supabase/migrations/`](../supabase/migrations/). Ru
 | `0001_init.sql` | Fresh database, first | `google_credentials`, `folder_configs`, `drive_channels`, `processed_files`, `subscriptions` — all with RLS |
 | `0002_work_processes.sql` | Before deploying a backend that uses work processes | `work_processes`, `process_destinations`, usage columns on `subscriptions`, `image_credit_grants`, `schema_migrations`, and the SQL functions below. Wrapped in a transaction; safe to re-run; the one-time backfill at the bottom only runs once (tracked in `schema_migrations`) |
 | `0003_cleanup.sql` | Only after deploying a backend build with the legacy single-folder endpoints removed | Drops `folder_configs` and its sync trigger, retires the `trialing` subscription status |
+| `0004_documents.sql` | **Before deploying this release** (document work processes, per-kind credits, plan families) | Adds `kind` to `work_processes` and `processed_files`; document usage columns on `subscriptions`; `kind` on `image_credit_grants`; widens `subscriptions_plan_check` to the 10 plan ids; adds `usage_snapshot`, `complete_processed_file_v2`, `grant_credits`, `admin_grant_document_credits`; updates `complete_processed_file`, `admin_set_plan`, `grant_image_credits` and `save_work_process` in place. Wrapped in one transaction, safe to re-run, purely additive |
 
-**Production status:** all three have been applied. `folder_configs` and `subscriptions.trial_ends_at` no longer exist there. The backend code still contains the legacy `/api/drive/config`, `/raw-status`, `/organize` endpoints and `/api/me`'s legacy fields — removing them is the only piece of the cleanup release left (code only; see [§9](#9-state-limits-and-next-steps)). For a brand-new database, run `0001` → `0002` → `0003` in that order.
+**Production status:** `0001`–`0003` are applied. **`0004_documents.sql` must be run by hand in the Supabase SQL editor before this release's code is deployed.** It's deliberately additive — every new column has a default, and `complete_processed_file`, `admin_set_plan`, `grant_image_credits` and `save_work_process` keep their old signature and behaviour for callers that don't pass a `kind` — so the *currently deployed* backend keeps working unchanged after it runs. The *new* backend logs `"Schema problem"` at boot and refuses to serve usage correctly against a database that's missing it (`schemaProblem()` below checks for `usage_snapshot`). See [DeveloperToDo.md §1.1](../DeveloperToDo.md#11-run-migration-0004_documentssql-in-supabase-before-pushing) for the exact steps and how to check it worked. The backend code still contains the legacy `/api/drive/config`, `/raw-status`, `/organize` endpoints and `/api/me`'s legacy fields — removing them is the only piece of the `0003` cleanup release left (code only; see [§9](#9-state-limits-and-next-steps)). For a brand-new database, run `0001` → `0002` → `0003` → `0004` in that order.
 
 ### What each table holds
 
@@ -119,33 +122,45 @@ Schema source of truth: [`../supabase/migrations/`](../supabase/migrations/). Ru
 |---|---|---|
 | `google_credentials` | Encrypted Drive refresh token per user | No RLS policy at all — unreachable from the browser; also encrypted at the app layer |
 | `folder_configs` | Legacy single Raw + Destination config | Removed by `0003`; only relevant on a database that hasn't run it yet |
-| `work_processes` | A user's AI work processes: Raw + Master folder, naming template, tag fields, instructions, time zone, on/off | Many per user; `unique (user_id, raw_folder_id)` — one process per Raw folder |
+| `work_processes` | A user's AI work processes: `kind` (`image`\|`document`, fixed at creation, added by `0004`), Raw + Master folder, naming template, tag fields, instructions, time zone, on/off | Many per user; `unique (user_id, raw_folder_id)` — one process per Raw folder |
 | `process_destinations` | Each process's destination folders and their AI-facing descriptions | Exactly one `is_fallback` (Unsorted) row per process, enforced by a unique partial index and by `save_work_process` |
 | `drive_channels` | The active watch channel + changes-feed page token | One row per user, covering every process; `resource_id = 'polling'` marks a polling-mode row |
-| `processed_files` | Filenames, tags, destination, credit bucket, status per processed file | `unique (user_id, file_id)` is what makes redelivered webhook notifications safe, and what makes a file sort automatically at most once. No image bytes |
-| `subscriptions` | Plan, status, and image usage counters | A row is created on first Drive connect (`ensureSubscription`); no row means no processing (fail closed) |
-| `image_credit_grants` | Audit log of every top-up credit change | `provider_reference` is unique, so a future payment webhook can't grant the same purchase twice |
-| `schema_migrations` | Which one-time data backfills have already run | Bookkeeping only |
+| `processed_files` | Filenames, tags, destination, credit bucket, `kind` (added by `0004`), status per processed file | `unique (user_id, file_id)` is what makes redelivered webhook notifications safe, and what makes a file sort automatically at most once. No image or document bytes |
+| `subscriptions` | Plan, status; image usage counters (`free_images_used`, `period_images_used`, `topup_balance`); document usage counters added by `0004` (`free_documents_used`, `period_documents_used`, `document_topup_balance`) | A row is created on first Drive connect (`ensureSubscription`); no row means no processing (fail closed) |
+| `image_credit_grants` | Audit log of every top-up credit change, of either kind (`kind` column added by `0004`) | `provider_reference` is unique, so a future payment webhook can't grant the same purchase twice. Table name predates documents — kept as-is; renaming would break the deployed backend's function bodies |
+| `schema_migrations` | Which one-time data backfills (and, since `0004`, which migrations) have already run | Bookkeeping only |
 
-### SQL functions (0002)
+### SQL functions
 
-| Function | Called from | Purpose |
-|---|---|---|
-| `image_usage(p_user_id)` | `repositories/usage.repo.js` | Read-only usage snapshot with the monthly counter rolled to the current billing period |
-| `complete_processed_file(...)` | `repositories/processedFile.repo.js` | Charges one credit (free → monthly → top-up → overage) and marks a file completed, atomically, fenced by the claim token |
-| `save_work_process(...)` | `repositories/workProcess.repo.js` | Creates/updates a process and replaces its destination list in one transaction, under a per-user advisory lock, enforcing the plan's process limit |
-| `grant_image_credits(...)` | `admin_grant_credits`, a future payment webhook | Adds or removes top-up credits and logs why |
-| `admin_set_plan` / `admin_grant_credits` | SQL editor only | Owner helpers — not exposed to any API role (see grants below) |
+| Function | Added / changed by | Called from | Purpose |
+|---|---|---|---|
+| `image_usage(p_user_id)` | 0002 | kept for the currently-deployed backend | Read-only **image-only** usage snapshot, monthly counter rolled to the current billing period |
+| `usage_snapshot(p_user_id)` | 0004 | `repositories/usage.repo.js` `getUsage()` | Read-only usage snapshot covering **both** kinds, same period-rollover rule as `image_usage` |
+| `complete_processed_file(...)` (9-arg, v1) | 0002; updated by 0004 | kept for the currently-deployed backend | Charges one **image** credit and marks a file completed, atomically, fenced by the claim token. `0004`'s only change: rolling the period also resets `period_documents_used`, so a stale document count can't carry across a period boundary during the deploy window |
+| `complete_processed_file_v2(...)` (10-arg, adds `p_kind`) | 0004 | `repositories/processedFile.repo.js` `completeFile()` | Same claim fence and `FOR UPDATE` locking as v1, generalized to charge either kind's three buckets (free → monthly → top-up → overage) and to stamp `processed_files.kind` |
+| `save_work_process(...)` | 0002; updated by 0004 | `repositories/workProcess.repo.js` | Creates/updates a process and replaces its destination list in one transaction, under a per-user advisory lock, enforcing the plan's process limit. `0004` adds kind handling: stores `kind` (defaulting to `image`) on insert; on update, raises `process_kind_immutable` if the caller sends a `kind` that disagrees with the stored one |
+| `grant_image_credits(...)` | 0002; delegates as of 0004 | `admin_grant_credits`, a future payment webhook | Adds or removes **image** top-up credits and logs why. Since `0004` it's a thin wrapper around `grant_credits(..., 'image', ...)` — one code path, same signature |
+| `grant_credits(p_user_id, p_kind, p_amount, p_reason, p_source, p_reference)` | 0004 | `admin_grant_credits`, `admin_grant_document_credits`, `grant_image_credits`, a future payment webhook | Adds or removes top-up credits of either kind and logs the grant; a removal below zero violates the balance check and rolls back the log row too (one function call, one transaction) |
+| `admin_set_plan` / `admin_grant_credits` / `admin_grant_document_credits` | 0002 / 0002 / 0004 | SQL editor only | Owner helpers — not exposed to any API role (see grants below). `admin_set_plan`'s plan-change/restart branch also resets `period_documents_used` as of `0004` |
 
-`billing_period`, `image_usage`, `complete_processed_file`, `grant_image_credits` and `save_work_process` are granted to `service_role` only. `admin_set_plan` and `admin_grant_credits` are revoked from every role including `service_role` — they only run as the database owner, from the SQL editor.
+`billing_period`, `image_usage`, `complete_processed_file`, `complete_processed_file_v2`, `usage_snapshot`, `grant_image_credits`, `grant_credits` and `save_work_process` are granted to `service_role` only. `admin_set_plan`, `admin_grant_credits` and `admin_grant_document_credits` are revoked from every role including `service_role` — they only run as the database owner, from the SQL editor.
 
 ### Managing plans and credits by hand
 
-No payment provider is integrated yet. Run these in the Supabase SQL Editor (verified against the function signatures in `0002_work_processes.sql`):
+No payment provider is integrated yet. Run these in the Supabase SQL Editor (verified against the function signatures in `0002_work_processes.sql` and `0004_documents.sql`).
+
+Plan ids — one free plan, plus three families × three tiers ([§5](#5-how-sorting-works) has the allowances and prices):
+
+| Family | Plan ids |
+|---|---|
+| — | `free` |
+| Images | `creator`, `studio`, `enterprise` |
+| Documents | `docs-creator`, `docs-studio`, `docs-enterprise` |
+| Images + Documents | `complete-creator`, `complete-studio`, `complete-enterprise` |
 
 ```sql
--- Upgrade (a plan change restarts the monthly period)
-select public.admin_set_plan('client@example.com', 'creator');      -- creator | studio | enterprise | free
+-- Upgrade (a plan change restarts the monthly period, both kinds)
+select public.admin_set_plan('client@example.com', 'complete-studio');   -- any of the 10 ids above
 ```
 
 ```sql
@@ -159,21 +174,26 @@ select public.admin_set_plan('client@example.com', 'studio', 'cancelled');
 ```
 
 ```sql
--- Sell an image pack (never expires; used after the plan's monthly allowance)
-select public.admin_grant_credits('client@example.com', 1000, 'Pack 1000, invoice #12');
+-- Sell an image pack (never expires; used after the plan's monthly image allowance)
+select public.admin_grant_credits('client@example.com', 1000, 'Image pack 1000, invoice #12');
+```
+
+```sql
+-- Sell a document pack (same rules, its own balance)
+select public.admin_grant_document_credits('client@example.com', 250, 'Document pack 250, invoice #13');
 ```
 
 ```sql
 -- Take credits back (fails, changing nothing, if the balance would go negative)
-select public.admin_grant_credits('client@example.com', -250, 'Refund, invoice #12');
+select public.admin_grant_document_credits('client@example.com', -250, 'Refund, invoice #13');
 ```
 
 ```sql
--- Where someone stands
-select * from public.image_usage((select id from auth.users where email = 'client@example.com'));
+-- Where someone stands, both kinds
+select * from public.usage_snapshot((select id from auth.users where email = 'client@example.com'));
 ```
 
-Plan limits (process count, free/monthly images, packs) live only in `backend/src/config/plans.js`, never in SQL — change them there and redeploy.
+Plan limits (process count, image/document allowances, packs) live only in `backend/src/config/plans.js`, never in SQL — change them there and redeploy. **Adding or renaming a plan id also needs `subscriptions_plan_check` updated in a new migration** — the 10 ids above are the ones `0004` allows.
 
 ---
 
@@ -186,8 +206,8 @@ All run from `backend/`.
 | `npm install` | Install dependencies |
 | `npm run dev` | Start with nodemon (auto-reload) |
 | `npm start` | Start without auto-reload |
-| `npm test` | `node --test --experimental-test-module-mocks "test/**/*.test.js"` — 15 tests (pipeline worker pools + account deletion), every collaborator mocked, no `.env` or network needed. Needs **Node 22.3+** for `--experimental-test-module-mocks` (the server itself runs on 18+) |
-| `npm run test:gemini [image] [--process spec.json]` | Classifies one image with Gemini and prints the tags + the filename the pipeline would rename to. Needs only `GEMINI_API_KEY`. **The default path (`test-assets/sample.jpg`) doesn't exist in this repo** — pass a real image path, e.g. `npm run test:gemini test-assets/Test1.jpg`. `--process spec.json` tries a specific work process's destinations/tags/instructions (the API's camelCase shape) instead of the built-in legacy single-Unsorted process |
+| `npm test` | `node --test --experimental-test-module-mocks "test/**/*.test.js"` — 122 tests across 9 files: pipeline worker pools, account deletion, entitlement math, per-kind organize-now (402 gating), process/template validation, document reading (`document.service.js`), Gemini request/response shapes, naming-template vectors, and — via `@electric-sql/pglite`, an in-memory Postgres — the real SQL from every migration file applied in order, exercised through the actual `complete_processed_file[_v2]` / `grant_credits` / `save_work_process` functions. Every collaborator is mocked or in-memory; no `.env`, network, or real Supabase project needed. Needs **Node 22.3+** for `--experimental-test-module-mocks` (the server itself runs on 18+) |
+| `npm run test:gemini [image or document path] [--process spec.json]` | Classifies one local file with Gemini and prints the tags + the filename the pipeline would rename to. The kind is inferred from the file's extension (`.pdf`, `.docx`, `.txt`, `.md`, `.csv` → document; anything else → image); a document is read with `document.service.js`'s `prepareDocumentBuffer` (PDF/docx/text only — no Drive, so no Google-native export). Needs only `GEMINI_API_KEY`. **The default path (`test-assets/sample.jpg`) doesn't exist in this repo** — pass a real file, e.g. `npm run test:gemini test-assets/Test1.jpg` or `npm run test:gemini test-assets/invoice.pdf`. `--process spec.json` tries a specific work process's destinations/tags/instructions (the API's camelCase shape) instead of the built-in legacy single-Unsorted process for that kind |
 | `npm run renew:channels` | Renews any Drive watch channel expiring within 24h, right now. Optional in production — the running server already does this hourly in-process (`NODE_ENV=production`); this is only useful as an out-of-band safety net or for a one-off manual renewal |
 | `npm run token -- <email> <password>` | Mints a Supabase access token for a test user, for curling authenticated routes. Needs only `SUPABASE_URL`/`SUPABASE_ANON_KEY` |
 
@@ -196,26 +216,69 @@ All run from `backend/`.
 ## 5. How sorting works
 
 1. Drive posts a webhook, or the auto-sync poller ticks (`AUTO_SYNC_INTERVAL_SECONDS > 0`).
-2. The user's changes feed is swept from the stored page token; each changed file's direct parent is matched against an active process's Raw folder.
-3. Matched files are grouped by process and run through that process's own worker pool, sized to `plan.aiPerProcess`. Different processes' pools run concurrently with each other; a server-wide semaphore (`MAX_CONCURRENT_AI_JOBS`) caps total download+classify concurrency across every user.
-4. Each worker: reserves one image credit synchronously, claims the file (idempotency), downloads it into memory, sends it to Gemini with the process's destinations/tag fields/instructions, renders the naming template, and renames+moves the file in Drive (never into any Raw folder — the loop guard). The credit is only actually charged, atomically, on success (`complete_processed_file`); every other outcome releases the reservation.
-5. **"Organize now"** (`POST /api/processes/:id/organize`, or the legacy `/api/drive/organize`) runs the same per-process worker pools directly against a Raw folder's current contents, for images the changes feed never reported because they arrived before the watch existed.
-6. When nothing can run — no credits left, or no active processes — the page token is fast-forwarded instead of listing changes, so a later Drive change doesn't have to re-read an ever-growing backlog. Images that arrived meanwhile just wait in Raw for "Organize now".
+2. The user's changes feed is swept from the stored page token; each changed file's direct parent and MIME type are matched against an active process's Raw folder and kind (`MIME_TYPES_BY_KIND[process.kind]`) — a file of the wrong kind for its Raw folder's process is left alone entirely, never claimed. A Google-native file (Doc/Sheet/Slide) still inside its 10-minute editing grace is skipped the same way, so it stays "waiting" until a later sweep or "Organize now" finds it past the grace window ([§9](#9-state-limits-and-next-steps)).
+3. Matched files are grouped by process and run through that process's own worker pool, sized to `plan.aiPerProcess`. Different processes' pools run concurrently with each other — an image process and a document process both sort at once — and a server-wide semaphore (`MAX_CONCURRENT_AI_JOBS`) caps total download+classify concurrency across every user and every kind.
+4. Each worker: reserves one credit of the file's kind synchronously, claims the file (idempotency), reads it into memory (image: downloaded whole; document: [below](#documents)), sends it to Gemini with the process's destinations/tag fields/instructions, renders the naming template, and renames+moves the file in Drive (never into any Raw folder — the loop guard). The credit is only actually charged, atomically, on success (`complete_processed_file_v2`); every other outcome releases the reservation.
+5. **"Organize now"** (`POST /api/processes/:id/organize`, or the legacy `/api/drive/organize`) runs the same per-process worker pools directly against a Raw folder's current contents, for files the changes feed never reported because they arrived before the watch existed.
+6. When nothing can run — no active processes, or every kind that has a runnable process is out of credits — the page token is fast-forwarded instead of listing changes, so a later Drive change doesn't have to re-read an ever-growing backlog. An account with, say, an image process out of credits and a document process that still has some keeps sorting documents; the exhausted kind's files just wait in Raw for "Organize now".
 
-### Plans (`backend/src/config/plans.js`)
+### Documents
 
-| Plan | Processes | AI workers / process | Free images (lifetime) | Monthly images | Price / month |
+Supported types (`MIME_TYPES_BY_KIND.document` in [src/utils/filename.js](src/utils/filename.js)), all read **in memory only**, never to disk:
+
+| MIME | How it's read | Cap |
+|---|---|---|
+| `application/pdf` | `pdf-lib` loads it; pages beyond the limit are copied into a fresh, smaller PDF; sent to Gemini inline as `application/pdf` | First `FILE_LIMITS.pagesRead` (5) pages |
+| `.docx` (`application/vnd...wordprocessingml.document`) | `mammoth.extractRawText({ buffer })` | First `FILE_LIMITS.textChars` (12,000) characters |
+| `text/plain`, `text/markdown`, `text/x-markdown`, `text/csv` | UTF-8 decode (leading BOM stripped, invalid bytes replaced, never throws) | First 12,000 characters |
+| `application/vnd.google-apps.document` | Drive `files.export` → `text/plain` | First 12,000 characters |
+| `application/vnd.google-apps.presentation` | Drive `files.export` → `text/plain` | First 12,000 characters |
+| `application/vnd.google-apps.spreadsheet` | Drive `files.export` → `text/csv` (first sheet) | First 12,000 characters |
+
+All of this is `services/document.service.js`'s `prepareDocument(userId, file)`, returning `{ mode: 'pdf', data, pages, pagesRead }` or `{ mode: 'text', text, truncated }`. Other behaviour worth knowing:
+
+- **20 MB size limit before download** (`FILE_LIMITS.documentMaxMb`), checked from Drive's reported `file.size` so an oversized file is never even fetched, let alone charged. Google-native files report no `size`; Drive's own ~10 MB export limit is the backstop, surfaced as a readable message (`exportSizeLimitExceeded`).
+- **docx zip-bomb guard.** A `.docx` is a zip; `declaredUnzippedBytes()` sums the central directory's declared uncompressed sizes *without inflating anything*, and a file that would unpack past `DOCX_MAX_UNPACKED_BYTES` (100 MB) is rejected before `mammoth` ever touches it.
+- **Encrypted/corrupt files fail readably**, never with a stack trace: "This PDF is password protected. Remove the password and try again.", "DriveTag couldn't open this PDF. It may be corrupted.", "DriveTag couldn't open this Word file safely. It may be corrupted, or it unpacks to far more than a normal document.", "DriveTag couldn't open this Word file. It may be corrupted or not really a .docx." A non-PDF document whose extracted text is empty fails with "This document has no readable text."
+- **Google-native files (Docs/Sheets/Slides) get a 10-minute editing grace** (`FILE_LIMITS.editingGraceMinutes`, `isStillBeingEdited(file, now)` in `document.service.js`): a file whose `modifiedTime` is inside that window is left alone entirely — not claimed, not charged, not counted as failed — because someone may still be writing it. It shows as "waiting" and is queued in memory for an automatic re-check once the window has passed (grace + 30 s), so it's sorted without anyone clicking anything. The re-check drops files that were moved, trashed or deleted meanwhile, re-defers files edited again, and keeps the entry through a Drive error. The queue is per instance and in memory (capped at 500 files per user): after a backend restart, such files wait for "Organize now".
+
+**AI document classification** (`gemini.service.js` `classifyDocument(content, process)` → `{ topic, type, organization, documentDate, fields, destination, matched }`):
+
+- Response fields, in schema order: `topic` (what it's about, a few words), `type` (invoice, receipt, contract, proposal, brief, report, letter, form, presentation, spreadsheet, …), `organization` (who it's from/for, `""` if unclear), `documentDate` (`YYYY-MM-DD` the document itself shows, `""` if unclear and validated round-trip through `Date` so e.g. Feb 30 can't survive), then the process's custom tag fields, then `destination` last.
+- **The system instruction is injection-hardened**, unlike the image one: it tells the model explicitly that everything inside the document is content, never an instruction — including text that looks like a system prompt or an "ignore previous instructions" attempt — because documents (unlike photos) are realistic prompt-injection vectors. A PDF is sent as `inlineData` (never the Files API — Zero-Retention). Extracted text is wrapped in a fence the document's own text can't spoof: `fenceSafe()` neutralizes any literal `<<<START DOCUMENT>>>`/`<<<END DOCUMENT>>>` markers already in the text before it's embedded.
+- **`DOCUMENT_COST_CONFIG`** uses `MediaResolution.MEDIA_RESOLUTION_LOW` (lower than images' `MEDIUM` — documents are text-dominated pages, not photos) with the same `ThinkingLevel.LOW`. Measured on `gemini-3.6-flash` (2026-09-19, code comment in `gemini.service.js`): a 1-page invoice PDF cost 828 total tokens at LOW vs. 1,228 at MEDIUM; a 5-page text-heavy report PDF cost 1,969 at LOW vs. 3,150 at MEDIUM — LOW ran 33–38% cheaper both times and picked the same type/destination/organization both times. A ~12,000-character text document (no PDF, so `mediaResolution` doesn't apply) cost 2,868 prompt tokens.
+
+### Credits, per kind
+
+Every user has two independent balances — image and document — each drawn in the same order: free (lifetime, Free plan only) → this billing period's monthly allowance → top-up packs (never expire) → `overage` (only reachable when two backend instances overlap mid-deploy). Failed files are never charged. A run reads both kinds' remaining credits once at the start (`loadEntitlement` → `{ image, document }`); each file reserves one credit of its own process's kind before its first `await`, synchronously, so concurrent workers can't over-dispatch. See "Loop guard" and "Several AI workers per process" in [../CLAUDE.md](../CLAUDE.md) for the full concurrency story — it's unchanged, just now keyed per kind.
+
+### Naming
+
+Rename templates use tokens per process kind, plus `{tag:<key>}` for the process's own custom fields (`TEMPLATE_TOKENS_BY_KIND`, [src/utils/filename.js](src/utils/filename.js)):
+
+| Kind | Tokens | Default template |
+|---|---|---|
+| `image` | `destination`, `subject`, `style`, `genre`, `date`, `original`, `process` | `{destination}_{subject}` |
+| `document` | `destination`, `type`, `topic`, `organization`, `docdate`, `date`, `original`, `process` | `{type}_{organization}_{topic}` |
+
+A token from the *other* kind is rejected with a hint naming that kind's own tokens (`validateTemplate(template, tagKeys, kind)`), e.g. "`{genre}` is an image token; document processes use `{type}`, `{topic}` or `{organization}`." Reserved tag-field keys are the process's **own** kind's tokens plus the built-in words (`tag`, `tags`, `ext`, `unsorted`, `fields`) — not the union of both kinds', because existing image processes may already have a tag keyed `type` or `topic`, which only mean something to document processes. `docdate` falls back to `""` unless the AI's `documentDate` is a real calendar date; Google-native files keep no file extension (Drive itself has none for them). Both renderers — `backend/src/utils/filename.js` (real files) and `frontend/src/lib/filename.ts` (the editor's live preview) — are checked line-for-line against `tests/filename-vectors.json` by the committed `test/filename-vectors.test.js` ([§4](#4-commands)).
+
+### Plans & pricing (`backend/src/config/plans.js`)
+
+Free, plus three **families** that share the same three **tiers** (processes and AI workers per process are the same across a family; the family only decides which monthly allowances come included). Any plan can run either kind of work process and buy either kind of top-up pack.
+
+| Tier | Processes | AI / process | Images family | Documents family | Images + Documents family |
 |---|---|---|---|---|---|
-| Free | 1 | 1 | 100 | 0 | $0 |
-| Creator | 5 | 3 | 0 | 1,000 | $9.99 |
-| Studio | 15 | 5 | 0 | 5,000 | $29.99 |
-| Enterprise | 50 | 15 | 0 | 25,000 | $99.99 (monthly billing only) |
+| **Free** | 1 | 1 | 100 images, lifetime | 25 documents, lifetime | (same row — Free isn't per-family) |
+| **Creator** | 5 | 3 | `creator` — 1,000 img/mo, $9.99 ($99.90/yr) | `docs-creator` — 500 docs/mo, $7.99 ($79.90/yr) | `complete-creator` — 1,000 img + 500 docs/mo, $14.99 ($149.90/yr) |
+| **Studio** | 15 | 5 | `studio` — 5,000 img/mo, $29.99 ($299.90/yr) | `docs-studio` — 2,000 docs/mo, $24.99 ($249.90/yr) | `complete-studio` — 5,000 img + 2,000 docs/mo, $44.99 ($449.90/yr) |
+| **Enterprise** | 50 | 15 | `enterprise` — 25,000 img/mo, $99.99 (monthly only) | `docs-enterprise` — 7,500 docs/mo, $79.99 (monthly only) | `complete-enterprise` — 25,000 img + 7,500 docs/mo, $149.99 (monthly only) |
 
-Top-up image packs (never expire, used after the plan's allowance): 250 images for $4.99, 1,000 for $14.99, 5,000 for $49.99. All prices are USD placeholders rendered on the pricing pages — no payment provider is wired up yet, so purchase buttons show "Coming soon." A `DOCUMENTS` block in the same file previews document-sorting pricing but is display-only (`available: false`) — the document pipeline isn't built; see [../README.md](../README.md) for the pricing strategy behind it.
+The Studio tier of each family is `popular: true` ("Recommended" badge). Enterprise tiers are billed monthly only, by decision; the others also offer yearly at 2 months free.
 
-### Gemini cost configuration
+**Top-up packs** (never expire, used after the plan's allowance for that kind): images 250/$4.99, 1,000/$14.99, 5,000/$49.99 (`TOPUP_PACKS`); documents 250/$5.99, 1,000/$19.99, 5,000/$79.99 (`DOCUMENT_PACKS`). All prices are USD placeholders rendered on the pricing pages — no payment provider is wired up yet, so purchase buttons show "Coming soon."
 
-Classification requests use `MediaResolution.MEDIA_RESOLUTION_MEDIUM` and `ThinkingLevel.LOW` instead of the SDK defaults ([src/services/gemini.service.js](src/services/gemini.service.js), `COST_CONFIG`). Measured on `gemini-3.6-flash` against six sample images: the defaults cost about 1,460 input + 420 thinking/output tokens per image, versus about 900 + 50 with this configuration — roughly 2x faster, and it picked the same destination and genre on all six samples. At today's per-token pricing that's on the order of $0.0009 per image; Google's published price for this model steps up from $0.75/$3.75 to $1.50/$7.50 per 1M input/output tokens on 2027-01-01, which would roughly double that to about $0.0018 per image.
+**`FILE_LIMITS`** (also in `plans.js`, since it's what keeps document pricing safe — a 500-page PDF costs the same as a 5-page one): `documentMaxMb: 20`, `pagesRead: 5`, `textChars: 12000`, `editingGraceMinutes: 10`. **`PROCESS_LIMITS`** caps destinations (20, not counting Unsorted), tag fields (10), and various field lengths — unchanged by this release, enforced by both `processValidation.js` and the frontend editor.
 
 ---
 
@@ -238,7 +301,7 @@ Classification requests use `MediaResolution.MEDIA_RESOLUTION_MEDIUM` and `Think
 
 **Boot-time log checks.** After every deploy, search the runtime logs for these — both are silent (the server still starts and serves `/health`) if they'd otherwise go unnoticed:
 - `"Production config problem"` — logged once per offending variable if `FRONTEND_URL`, `CORS_ORIGINS`, `GOOGLE_OAUTH_REDIRECT_URI` or `DRIVE_WEBHOOK_URL` still points at `localhost`/`127.0.0.1` or an `ngrok`/placeholder URL ([src/config/env.js](src/config/env.js) `productionConfigProblems()`).
-- `"Schema problem"` — logged if migration `0002_work_processes.sql` hasn't been run against this database yet ([src/repositories/usage.repo.js](src/repositories/usage.repo.js) `schemaProblem()`).
+- `"Schema problem"` — logged if migration `0002_work_processes.sql` or `0004_documents.sql` hasn't been run against this database yet ([src/repositories/usage.repo.js](src/repositories/usage.repo.js) `schemaProblem()`, which checks `image_usage` then `usage_snapshot`).
 
 **Channel renewal runs in-process.** When `NODE_ENV=production`, `server.js` calls `startChannelRenewal()` at boot, which renews any watch channel expiring within 24h, once an hour, for as long as the instance is up. `npm run renew:channels` (or `scripts/renew-channels.js` on an external schedule) is an optional extra safety net for instance downtime — not required for normal operation.
 
@@ -298,32 +361,34 @@ All `/api/*` routes except `GET /api/plans` require `Authorization: Bearer <supa
 | GET | `/api/drive/raw-status` | Bearer | **Legacy** — remove in the cleanup release |
 | POST | `/api/drive/organize` | Bearer | **Legacy** — remove in the cleanup release |
 | GET | `/api/processes` | Bearer | List work processes |
-| POST | `/api/processes` | Bearer | Create a work process |
+| POST | `/api/processes` | Bearer | Create a work process. Body requires `kind` (`"image"` \| `"document"`) — a missing/invalid value is a 400 field error on `kind` |
 | GET | `/api/processes/status` | Bearer | Per-process Raw folder counts + live worker counts |
 | GET | `/api/processes/:id` | Bearer | |
-| PUT | `/api/processes/:id` | Bearer | |
+| PUT | `/api/processes/:id` | Bearer | Omit `kind`, or send the process's existing one — a `kind` that disagrees with the stored value is a 400 field error on `kind` (a process's kind never changes) |
 | PATCH | `/api/processes/:id` | Bearer | Body `{ enabled: boolean }` |
 | DELETE | `/api/processes/:id` | Bearer | Deleting the last process also stops the watch |
-| POST | `/api/processes/:id/organize` | Bearer | "Organize now" for one process |
-| GET | `/api/me` | Bearer | Dashboard summary: plan, usage, process counts, watch state (plus **legacy** `config`/`subscription`/`entitled` fields, removed in the cleanup release) |
+| POST | `/api/processes/:id/organize` | Bearer | "Organize now" for one process. 402 with code `out_of_images` or `out_of_documents` (naming that process's own kind) when its kind has no credits left; response includes `willProcess = min(waiting, credits[kind])` |
+| GET | `/api/me` | Bearer | Dashboard summary: `plan` (`freeImages`/`freeDocuments`/`monthlyImages`/`monthlyDocuments`), `usage` (`images`/`documents`, each `{ freeUsed, freeLimit, periodUsed, periodLimit, topupBalance, remaining, exhausted }`, plus legacy flat fields that mirror `images`), process counts, watch state (plus **legacy** `config`/`subscription`/`entitled` fields, removed in the cleanup release) |
 | DELETE | `/api/me` | Bearer | Body `{ "confirm": "DELETE" }`. See [§7](#7-operations) |
-| GET | `/api/activity` | Bearer | `?processId=`, `?limit=` (max 200). Tag/rename history, metadata only |
+| GET | `/api/activity` | Bearer | `?processId=`, `?limit=` (max 200). Tag/rename history, metadata only; each row's `kind` says which fields its `tags` holds (`genre`/`subject`/`style` for images, `type`/`topic`/`organization`/`document_date` for documents) — rows written before `0004` have no `kind` and are treated as images |
 
 ---
 
 ## 9. State, limits and next steps
 
-**Live:** Drive OAuth (with the account-linking hole closed — the callback parks the grant and only the flow's starter can claim it), the watch-channel lifecycle with in-process hourly renewal, the polling fallback, work processes with per-process AI worker pools, Gemini classification with a per-process schema, rename/move with the loop guard, plan/credit metering with atomic charging, "Organize now", and account deletion. 15 automated tests cover the worker pools and account deletion (`npm test`); everything else has been verified by manual probes, curl and browser checks (no broader automated suite exists yet).
+**Live:** Drive OAuth (with the account-linking hole closed — the callback parks the grant and only the flow's starter can claim it), the watch-channel lifecycle with in-process hourly renewal, the polling fallback, work processes of both kinds (`image` and `document`) with per-process AI worker pools, Gemini classification with a per-process schema for each kind, the document pipeline (PDF/Word/Google Docs·Sheets·Slides/text, in memory only), rename/move with the loop guard, per-kind plan/credit metering with atomic charging, "Organize now", and account deletion. 122 automated tests (`npm test`, [§4](#4-commands)) cover the worker pools, account deletion, entitlement math, per-kind organize-now gating, process/template validation, document reading, Gemini request/response shapes, naming-template vectors, and — via an in-memory Postgres — every SQL migration and function; everything else has been verified by manual probes, curl and browser checks.
 
 **Not built yet:**
-- **Checkout and the payment-provider webhook** — Lemon Squeezy vs. Paddle undecided. Plans and limits, usage metering, and the top-up credit ledger all exist; until checkout exists, plans and credits are set by hand ([§3](#3-database)). See [../README.md](../README.md) for the wider pricing strategy, including the previewed document-sorting tier.
-- **Document sorting** (PDF/Word/Docs/text) — priced for display in `plans.js`'s `DOCUMENTS` block (`available: false`), not implemented.
+- **Checkout and the payment-provider webhook** — Lemon Squeezy vs. Paddle undecided. Plans and limits, usage metering, and both top-up credit ledgers all exist; until checkout exists, plans and credits are set by hand ([§3](#3-database)). See [../README.md](../README.md) for the wider pricing strategy.
 - **The cleanup release** — remove `/api/drive/config`, `/raw-status`, `/organize` and `/api/me`'s legacy fields now that the database side (`0003_cleanup.sql`) is already applied in production and no old frontend build is being served.
-- **Re-sorting an already-sorted image** — `processed_files` is unique on `(user_id, file_id)`, so a file is sorted automatically at most once; there's no "run it again" action.
+- **Re-sorting an already-sorted file** — `processed_files` is unique on `(user_id, file_id)`, so a file is sorted automatically at most once; there's no "run it again" action.
+- **`helmet` / rate limiting.**
 
 **Known limits:**
 - Single backend instance only ([§6](#6-deploying-to-digitalocean)).
 - Shared Drives aren't supported — Drive queries use `restrictToMyDrive: true`, and shared-drive folders are rejected when saving a process. A Raw folder from "Shared with me" isn't swept automatically by the changes feed; "Organize now" still sorts it.
-- SVG and AVIF aren't sortable — `SUPPORTED_MIME_TYPES` ([src/utils/filename.js](src/utils/filename.js)) covers JPEG, PNG, WebP, GIF, HEIC, HEIF and TIFF only.
-- Any image over `MAX_IMAGE_BYTES` (default 18 MB) is skipped with a readable per-file error rather than sent to Gemini.
+- SVG and AVIF aren't sortable as images — `MIME_TYPES_BY_KIND.image` ([src/utils/filename.js](src/utils/filename.js)) covers JPEG, PNG, WebP, GIF, HEIC, HEIF and TIFF only.
+- `.xlsx`, `.pptx` and legacy `.doc` aren't sortable as documents — only PDF, `.docx`, plain text/Markdown/CSV, and Google Docs/Sheets/Slides (`MIME_TYPES_BY_KIND.document`, [§5](#5-how-sorting-works)).
+- Any image over `MAX_IMAGE_BYTES` (default 18 MB), or any document over `FILE_LIMITS.documentMaxMb` (20 MB), is skipped with a readable per-file error rather than sent to Gemini — and never charged.
+- A Google Doc/Sheet/Slide edited within the last `FILE_LIMITS.editingGraceMinutes` (10) minutes is left alone entirely: not claimed, not charged, not counted as failed. It shows as "waiting" (there's no separate "still editing" status) and is sorted automatically about 10½ minutes after its last edit via the in-memory re-check queue — unless the backend restarts in between, in which case "Organize now" picks it up.
 - Duplicate output filenames are allowed within a folder — Drive keeps files distinct by ID; add a `{date}` or `{original}` token to a naming template if that's undesirable.

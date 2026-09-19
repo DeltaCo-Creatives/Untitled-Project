@@ -56,7 +56,11 @@ export default function Dashboard() {
   const sortingActive = watchState === 'live' || watchState === 'polling';
   const syncing = Boolean(status?.syncing);
   const hasProcesses = processes.length > 0;
-  const exhausted = Boolean(me?.usage?.exhausted);
+  const imagesExhausted = Boolean(me?.usage?.images?.exhausted);
+  const documentsExhausted = Boolean(me?.usage?.documents?.exhausted);
+  const exhausted = imagesExhausted || documentsExhausted;
+  // Only names the kind(s) that actually ran out, so an account that only sorts one kind never hears about the other.
+  const exhaustedKinds = [imagesExhausted && 'images', documentsExhausted && 'documents'].filter(Boolean).join(' and ');
   const organizingProcess =
     syncing && status?.kind === 'organize' ? processes.find((process) => process.id === status.activeProcessId) : undefined;
   const live = syncing || Object.keys(runs).length > 0 || activity.some((entry) => entry.status === 'processing');
@@ -78,9 +82,9 @@ export default function Dashboard() {
             ? organizingProcess
               ? `DriveTag is organizing ${organizingProcess.name} right now.`
               : 'DriveTag is organizing your Raw folders right now.'
-            : 'DriveTag is sorting new images right now.'
+            : 'DriveTag is sorting new files right now.'
           : exhausted
-            ? 'You’re out of images, so new ones are waiting in Raw.'
+            ? `You’re out of ${exhaustedKinds}, so new ones are waiting in Raw.`
             : sortingActive
               ? me && me.processCounts.active > 0
                 ? 'DriveTag is quietly organizing your Drive.'
@@ -292,7 +296,7 @@ export default function Dashboard() {
                 <p className="mx-auto mb-7 max-w-sm leading-relaxed text-ink-soft">
                   {savedProcesses > 0
                     ? `Your ${plural(savedProcesses, 'work process is', 'work processes are')} saved. Reconnect Drive, then switch automatic sorting back on.`
-                    : 'Give DriveTag permission to watch your folders, and it’ll start tagging and sorting new images.'}
+                    : 'Give DriveTag permission to watch your folders, and it’ll start tagging and sorting new files.'}
                 </p>
                 <ButtonLink to="/onboarding" size="lg" magnetic>
                   Continue setup

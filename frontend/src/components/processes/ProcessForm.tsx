@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { MessageSquareText, Plus, Settings2, Signpost, Sparkles, Tags, Type } from 'lucide-react';
+import { MessageSquareText, Plus, Settings2, Shapes, Signpost, Sparkles, Tags, Type } from 'lucide-react';
 import type { ProcessLimits, WorkProcess } from '../../lib/api';
+import type { ProcessKind } from '../../lib/filename';
 import { Flip, gsap, useGSAP, prefersReducedMotion } from '../../lib/gsap';
 import { Button } from '../ui/Button';
 import { TextField } from '../ui/TextField';
@@ -8,9 +9,11 @@ import { FolderPickerField } from '../drive/FolderPickerField';
 import { DestinationEditorCard } from './DestinationEditorCard';
 import { InstructionsField } from './InstructionsField';
 import { NamingTemplateEditor } from './NamingTemplateEditor';
+import { ProcessKindBadge, ProcessKindPicker } from './ProcessKindPicker';
 import { TagFieldsEditor } from './TagFieldsEditor';
 import {
-  DESTINATION_IDEAS,
+  DEFAULT_TEMPLATE_BY_KIND,
+  DESTINATION_IDEAS_BY_KIND,
   QUICK_DESTINATION_LIMIT,
   UNSORTED_NAME,
   disabledFoldersFor,
@@ -94,6 +97,12 @@ export function ProcessForm({
     latest.current = { draft, onChange };
   });
 
+  const existing = draft.destinations.some((destination) => destination.id !== null);
+  // Before a new process has a kind, the form still needs to render something; fall back to images.
+  const kind: ProcessKind = draft.kind ?? 'image';
+  const noun = kind === 'document' ? 'document' : 'image';
+  const nouns = kind === 'document' ? 'documents' : 'images';
+
   const indexed = draft.destinations.map((destination, index) => ({ destination, index }));
   const regular = indexed.filter((entry) => !entry.destination.isFallback);
   const fallbacks = indexed.filter((entry) => entry.destination.isFallback);
@@ -101,8 +110,7 @@ export function ProcessForm({
   const atLimit = regular.length >= maxRegular;
   const orderKey = draft.destinations.map((destination) => destination.localId).join('|');
   const usedNames = new Set(draft.destinations.map((destination) => destination.name.trim().toLowerCase()));
-  const ideas = DESTINATION_IDEAS.filter((idea) => !usedNames.has(idea.name.toLowerCase()));
-  const existing = draft.destinations.some((destination) => destination.id !== null);
+  const ideas = DESTINATION_IDEAS_BY_KIND[kind].filter((idea) => !usedNames.has(idea.name.toLowerCase()));
   const destinationFolders = disabledFoldersFor(otherProcesses, 'destination', draft);
 
   // ---------------------------------------------------------------- destination list motion
@@ -225,6 +233,13 @@ export function ProcessForm({
   const changeTagFields = (next: TagFieldDraft[]) =>
     update({ tagFields: next, renameTemplate: syncTemplateWithTagFields(draft.renameTemplate, draft.tagFields, next) });
 
+  // Swaps in the new kind's default naming template, but only while the template is still untouched —
+  // an edit the user made on purpose is never silently overwritten by switching kinds.
+  const changeKind = (nextKind: ProcessKind) => {
+    const untouched = draft.renameTemplate === DEFAULT_TEMPLATE_BY_KIND[kind];
+    update({ kind: nextKind, renameTemplate: untouched ? DEFAULT_TEMPLATE_BY_KIND[nextKind] : draft.renameTemplate });
+  };
+
   // ---------------------------------------------------------------- render
 
   const countText = atLimit
@@ -239,6 +254,7 @@ export function ProcessForm({
       destination={destination}
       index={index}
       number={position + 1}
+      kind={kind}
       errors={errors}
       limits={limits}
       masterName={draft.master?.name ?? null}
@@ -255,13 +271,44 @@ export function ProcessForm({
 
   return (
     <div className={variant === 'full' ? 'space-y-6' : 'space-y-10'}>
+      {existing ? (
+        <Section
+          id="kind"
+          variant={variant}
+          icon={<Shapes className="h-5 w-5" />}
+          tint="bg-periwinkle-soft"
+          title="What this process sorts"
+          description="Chosen when the process was created."
+        >
+          <div data-field="kind" data-invalid={errors.kind ? 'true' : undefined}>
+            <ProcessKindBadge kind={kind} />
+            {errors.kind && (
+              <p role="alert" className="mt-2 text-xs font-semibold text-rose-ink">
+                {errors.kind}
+              </p>
+            )}
+          </div>
+        </Section>
+      ) : (
+        <Section
+          id="kind"
+          variant={variant}
+          icon={<Shapes className="h-5 w-5" />}
+          tint="bg-periwinkle-soft"
+          title="What this process sorts"
+          description="Choose once — a process can’t switch kinds after it’s created."
+        >
+          <ProcessKindPicker value={draft.kind} onChange={changeKind} name="process-kind" error={errors.kind} disabled={disabled} />
+        </Section>
+      )}
+
       <Section
         id="basics"
         variant={variant}
         icon={<Settings2 className="h-5 w-5" />}
         tint="bg-lavender-soft"
         title="The basics"
-        description="Name the process, then pick where images arrive and where sorted ones should live."
+        description={`Name the process, then pick where ${nouns} arrive and where sorted ones should live.`}
       >
         <div className="space-y-5">
           <div data-field="name" data-invalid={errors.name ? 'true' : undefined}>
@@ -284,7 +331,7 @@ export function ProcessForm({
                 tone="butter"
                 value={draft.raw}
                 onChange={(raw) => update({ raw })}
-                hint="Drop images here and DriveTag sorts them."
+                hint={`Drop ${nouns} here and DriveTag sorts them.`}
                 error={errors.rawFolderId}
                 disabledFolders={disabledFoldersFor(otherProcesses, 'raw', draft)}
                 modalTitle="Choose the Raw folder"
@@ -297,7 +344,7 @@ export function ProcessForm({
                 tone="sage"
                 value={draft.master}
                 onChange={(master) => update({ master })}
-                hint="Sorted images go into folders inside this one"
+                hint={`Sorted ${nouns} go into folders inside this one`}
                 error={errors.masterFolderId}
                 disabledFolders={disabledFoldersFor(otherProcesses, 'master', draft)}
                 modalTitle="Choose the Master folder"
@@ -314,7 +361,7 @@ export function ProcessForm({
         icon={<Signpost className="h-5 w-5" />}
         tint="bg-periwinkle-soft"
         title="Destinations"
-        description="Where images can go. The AI reads each name and description and picks the best fit; anything that fits none lands in Unsorted."
+        description={`Where ${nouns} can go. The AI reads each name and description and picks the best fit; anything that fits none lands in Unsorted.`}
       >
         {errors.destinations && (
           <p
@@ -336,7 +383,7 @@ export function ProcessForm({
               </span>
               <p className="font-bold">No destinations yet</p>
               <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-ink-soft">
-                Add one for each kind of image you get. Until then, everything lands in{' '}
+                Add one for each kind of {noun} you get. Until then, everything lands in{' '}
                 {fallbacks[0]?.destination.name.trim() || UNSORTED_NAME}.
               </p>
               {ideas.length > 0 && !atLimit && (
@@ -381,9 +428,10 @@ export function ProcessForm({
             icon={<Type className="h-5 w-5" />}
             tint="bg-butter-soft"
             title="File names"
-            description="Build each sorted image’s new name from tokens the AI fills in."
+            description={`Build each sorted ${noun}’s new name from tokens the AI fills in.`}
           >
             <NamingTemplateEditor
+              kind={kind}
               template={draft.renameTemplate}
               onChange={(renameTemplate) => update({ renameTemplate })}
               tagFields={draft.tagFields}
@@ -403,9 +451,9 @@ export function ProcessForm({
             icon={<Tags className="h-5 w-5" />}
             tint="bg-sage-soft"
             title="Tag fields"
-            description="Ask the AI for extra details about every image, then use them in file names."
+            description={`Ask the AI for extra details about every ${noun}, then use them in file names.`}
           >
-            <TagFieldsEditor fields={draft.tagFields} onChange={changeTagFields} errors={errors} limits={limits} disabled={disabled} />
+            <TagFieldsEditor kind={kind} fields={draft.tagFields} onChange={changeTagFields} errors={errors} limits={limits} disabled={disabled} />
           </Section>
 
           <Section
@@ -417,6 +465,7 @@ export function ProcessForm({
             description="Anything else DriveTag should keep in mind when it sorts for this process."
           >
             <InstructionsField
+              kind={kind}
               value={draft.instructions}
               onChange={(instructions) => update({ instructions })}
               maxChars={limits.instructionsMax}

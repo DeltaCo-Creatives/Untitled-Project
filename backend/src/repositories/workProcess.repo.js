@@ -8,6 +8,7 @@ const RAISED_CODES = [
   "exactly_one_fallback",
   "duplicate_destination_id",
   "destinations_must_be_array",
+  "process_kind_immutable",
 ];
 
 // Supabase caps every response at 1000 rows and truncates silently. A chunk of 10

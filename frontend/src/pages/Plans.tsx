@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
   CircleAlert,
   Clock3,
+  Compass,
   CreditCard,
+  FileText,
   Hourglass,
   House,
   Images,
+  Layers,
   Lock,
   PlugZap,
   RefreshCw,
@@ -25,12 +28,13 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { Button, ButtonLink } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
+import { FamilyPicker } from '../components/billing/FamilyPicker';
 import { PlanGrid } from '../components/billing/PlanGrid';
 import { TopupPacks } from '../components/billing/TopupPacks';
 import { UsageMeter } from '../components/billing/UsageMeter';
 import { TransparencyNote } from '../components/billing/TransparencyNote';
-import { DocumentPricingSection } from '../components/billing/DocumentPricing';
-import { freeImageAllowance } from '../components/billing/planFeatures';
+import { DocumentsExplainer } from '../components/billing/DocumentsExplainer';
+import { freeDocumentAllowance, freeImageAllowance, isFamilyChoice, type FamilyChoice } from '../components/billing/planFeatures';
 
 interface FaqItem {
   icon: LucideIcon;
@@ -39,7 +43,7 @@ interface FaqItem {
   answer: string;
 }
 
-function faqItems(freeImages: number): FaqItem[] {
+function faqItems(freeImages: number, freeDocuments: number, fileLimits: { pagesRead: number; textChars: number; documentMaxMb: number; editingGraceMinutes: number }): FaqItem[] {
   return [
     {
       icon: Images,
@@ -49,27 +53,49 @@ function faqItems(freeImages: number): FaqItem[] {
         'Each image DriveTag sorts counts once, whether it lands in one of your destinations or in Unsorted. Failures never count, so a retry only uses an image when it works.',
     },
     {
+      icon: FileText,
+      bubble: 'bg-periwinkle-soft',
+      question: 'What counts as a document?',
+      answer: `One document is one document credit, however long it is — the AI only reads the first ${plural(fileLimits.pagesRead, 'page', 'pages')} of a PDF, or about ${formatCount(fileLimits.textChars)} characters of text. Files over ${fileLimits.documentMaxMb} MB are skipped before they're opened, and never charged. A Google Doc, Sheet or Slide edited in the last ${plural(fileLimits.editingGraceMinutes, 'minute', 'minutes')} is left alone until whoever's writing it is done.`,
+    },
+    {
       icon: Hourglass,
       bubble: 'bg-butter-soft',
       question: 'What happens when I run out?',
       answer:
-        'Nothing gets lost. New images simply wait in your Raw folder. Upgrade or add an image pack, then press “Organize now” on your process to sort everything that piled up.',
+        'Nothing gets lost. New files simply wait in your Raw folder. Upgrade, or add an image or document pack, then press “Organize now” on your process to sort everything that piled up.',
     },
     {
       icon: Workflow,
       bubble: 'bg-sage-soft',
       question: 'What’s an AI work process?',
       answer:
-        'A Raw folder DriveTag watches, plus the destination folders it sorts into. You describe each destination in plain words and pick the naming, tags and instructions, so every client or project can have its own.',
+        'A Raw folder DriveTag watches, plus the destination folders it sorts into. Each process sorts either images or documents — you choose which when you create it — and you describe every destination in plain words with your own naming, tags and instructions.',
+    },
+    {
+      icon: Layers,
+      bubble: 'bg-lavender-soft',
+      question: 'Can one plan sort both images and documents?',
+      answer:
+        'Yes — any plan can run both kinds of work process. Your family only decides which monthly allowances come included; an image or document pack tops up either kind, on any plan.',
+    },
+    {
+      icon: Compass,
+      bubble: 'bg-periwinkle-soft',
+      question: 'Which family should I pick?',
+      answer:
+        'Images if you only handle photos and graphics, Documents if it’s paperwork, or Images + Documents if you have both — the bundle costs less than buying the two plans separately.',
     },
     {
       icon: CreditCard,
-      bubble: 'bg-periwinkle-soft',
+      bubble: 'bg-butter-soft',
       question: 'Can I cancel anytime?',
-      answer: `Payments launch soon, so there’s nothing to pay for or cancel yet. Free needs no credit card, and your ${formatCount(freeImages)} free images have no time limit.`,
+      answer: `Payments launch soon, so there’s nothing to pay for or cancel yet. Free needs no credit card, and your ${formatCount(freeImages)} free images and ${formatCount(freeDocuments)} free documents have no time limit.`,
     },
   ];
 }
+
+const DEFAULT_FILE_LIMITS = { pagesRead: 5, textChars: 12000, documentMaxMb: 20, editingGraceMinutes: 10 };
 
 export default function Plans() {
   useDocumentTitle('Plans & pricing');
@@ -77,16 +103,45 @@ export default function Plans() {
   const { plans, loading, error, retry } = usePlans();
   const pageRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  // Jumping here from elsewhere (e.g. Landing's "See document plans" link) lands on a hash the router doesn't
-  // scroll to itself, and the target section only exists once plans have loaded.
+  // Default to Images unless the URL says otherwise: ?family=images|documents|complete, or the old #documents link.
+  const [family, setFamily] = useState<FamilyChoice>(() => {
+    const fromQuery = searchParams.get('family');
+    if (isFamilyChoice(fromQuery)) return fromQuery;
+    if (window.location.hash === '#documents') return 'documents';
+    return 'images';
+  });
+
+  const changeFamily = (next: FamilyChoice) => {
+    setFamily(next);
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.set('family', next);
+        return params;
+      },
+      { replace: true },
+    );
+  };
+
+  // Jumping here from elsewhere lands on a hash the router doesn't scroll to itself, and the target only exists
+  // once plans have loaded. The old #documents link chose the Documents family above; it scrolls to the plans.
   useEffect(() => {
     if (!location.hash || !plans) return;
-    const id = location.hash.slice(1);
-    const frame = requestAnimationFrame(() => {
-      document.getElementById(id)?.scrollIntoView({ block: 'start' });
-    });
-    return () => cancelAnimationFrame(frame);
+    const id = location.hash === '#documents' ? 'plans-heading' : location.hash.slice(1);
+    const scroll = () => document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    // Fonts, entrance animations and late-loading cards can shift the layout after the first jump; check once
+    // more when things have settled and jump again only if the target was knocked out of place.
+    const settle = window.setTimeout(() => {
+      const top = document.getElementById(id)?.getBoundingClientRect().top;
+      if (top !== undefined && Math.abs(top) > 8) scroll();
+    }, 600);
+    const frame = requestAnimationFrame(scroll);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(settle);
+    };
   }, [location.hash, plans]);
 
   const [me, setMe] = useState<MeResponse | null>(null);
@@ -128,7 +183,9 @@ export default function Plans() {
   const currentPlanId = account ? (account.plan?.id ?? 'free') : null;
   const accountCard = account ? (account.plan && account.usage ? 'usage' : 'connect') : null;
   const freeImages = freeImageAllowance(plans);
-  const faq = faqItems(freeImages);
+  const freeDocuments = freeDocumentAllowance(plans);
+  const fileLimits = plans?.fileLimits ?? DEFAULT_FILE_LIMITS;
+  const faq = faqItems(freeImages, freeDocuments, fileLimits);
 
   useReveal(pageRef, [Boolean(plans)]);
 
@@ -217,17 +274,18 @@ export default function Plans() {
             </span>
           </h1>
           <p className="plans-sub mx-auto max-w-xl text-lg leading-relaxed text-ink-soft">
-            Your first {formatCount(freeImages)} images are free, with no credit card and no time limit. Sorting for more
-            clients? Add work processes and a fresh image allowance every month.
+            Your first {formatCount(freeImages)} images and {formatCount(freeDocuments)} documents are free, with no
+            credit card and no time limit. Sorting for more clients? Add work processes and a fresh allowance every
+            month.
           </p>
           {plans && (
             <nav aria-label="Jump to pricing section" className="plans-sub mt-6 flex items-center justify-center gap-2 text-sm font-bold text-ink-soft">
               <a href="#plans-heading" className="rounded-lg px-2 py-1 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
-                Images
+                Plans
               </a>
               <span aria-hidden>·</span>
-              <a href="#documents" className="rounded-lg px-2 py-1 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
-                Documents
+              <a href="#documents-explainer" className="rounded-lg px-2 py-1 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
+                How documents work
               </a>
             </nav>
           )}
@@ -287,7 +345,7 @@ export default function Plans() {
                 </h2>
                 <p className="mt-1 leading-relaxed text-ink-soft">
                   Connect Google Drive and set up your first work process to start sorting your{' '}
-                  {formatCount(freeImages)} free images.
+                  {formatCount(freeImages)} free images and {formatCount(freeDocuments)} free documents.
                 </p>
               </div>
               <ButtonLink to="/dashboard" className="shrink-0">
@@ -306,7 +364,7 @@ export default function Plans() {
           {loading ? (
             <div role="status">
               <span className="sr-only">Loading plans…</span>
-              <Skeleton className="mx-auto mb-10 h-11 w-52" />
+              <Skeleton className="mx-auto mb-10 h-24 w-full max-w-xl" />
               <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
                 {[0, 1, 2, 3].map((i) => (
                   <Skeleton key={i} className="h-[28rem]" />
@@ -329,8 +387,12 @@ export default function Plans() {
             </div>
           ) : (
             <>
+              {plans.families.length > 0 && (
+                <FamilyPicker families={plans.families} value={family} onChange={changeFamily} className="mb-10" />
+              )}
               <PlanGrid
                 plans={plans.plans}
+                family={family}
                 currency={plans.currency}
                 currentPlanId={currentPlanId}
                 signedIn={Boolean(user)}
@@ -340,32 +402,42 @@ export default function Plans() {
           )}
         </section>
 
-        {/* Image packs */}
-        {plans && plans.topupPacks.length > 0 && (
+        {/* Packs */}
+        {plans && (plans.topupPacks.length > 0 || plans.documentPacks.length > 0) && (
           <section aria-labelledby="packs-heading" className="mx-auto max-w-5xl px-4 pb-20">
             <div className="mb-10 text-center">
               <p data-reveal className="mb-3 text-sm font-extrabold uppercase tracking-widest text-ink-soft">
-                Image packs
+                Packs
               </p>
               <h2 data-reveal id="packs-heading" className="mb-4 text-3xl font-bold tracking-tight sm:text-4xl">
-                Need a few more images?
+                Need a few more images or documents?
               </h2>
               <p data-reveal className="mx-auto max-w-xl text-lg leading-relaxed text-ink-soft">
-                Packs top up any plan, Free included. They never expire and only kick in once your plan’s allowance runs out.
+                Any plan, Free included, can add either kind of pack. They never expire and only kick in once your
+                plan’s allowance for that kind runs out.
               </p>
             </div>
-            <TopupPacks packs={plans.topupPacks} currency={plans.currency} />
+            {plans.topupPacks.length > 0 && (
+              <div className={plans.documentPacks.length > 0 ? 'mb-12' : ''}>
+                <h3 className="mb-5 text-center text-xl font-bold tracking-tight">Image packs</h3>
+                <TopupPacks packs={plans.topupPacks} currency={plans.currency} unitLabel="image" />
+              </div>
+            )}
+            {plans.documentPacks.length > 0 && (
+              <div>
+                <h3 className="mb-5 text-center text-xl font-bold tracking-tight">Document packs</h3>
+                <TopupPacks
+                  packs={plans.documentPacks.map((pack) => ({ id: pack.id, images: pack.documents, price: pack.price }))}
+                  currency={plans.currency}
+                  unitLabel="document"
+                />
+              </div>
+            )}
           </section>
         )}
 
         {/* Documents */}
-        {plans && (
-          <DocumentPricingSection
-            documents={plans.documents}
-            currency={plans.currency}
-            imagePlans={plans.plans}
-          />
-        )}
+        {plans && <DocumentsExplainer fileLimits={plans.fileLimits} />}
 
         {/* FAQ */}
         <section aria-labelledby="faq-heading" className="mx-auto max-w-5xl px-4 pb-20">
@@ -400,7 +472,7 @@ export default function Plans() {
               <p className="mt-1 text-ink/80">
                 {user
                   ? 'Your processes are waiting on the dashboard.'
-                  : `Start with ${formatCount(freeImages)} free images. No credit card, no time limit.`}
+                  : `Start with ${formatCount(freeImages)} free images and ${formatCount(freeDocuments)} free documents. No credit card, no time limit.`}
               </p>
             </div>
             <ButtonLink to={user ? '/dashboard' : '/login'} variant="secondary" size="lg" magnetic className="shrink-0">

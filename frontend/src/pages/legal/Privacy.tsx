@@ -4,7 +4,7 @@ import LegalPage, { LegalSection } from './LegalPage';
 const TOC = [
   { id: 'overview', label: 'Overview' },
   { id: 'who-we-are', label: 'Who we are' },
-  { id: 'zero-retention', label: 'Zero-Retention for images' },
+  { id: 'zero-retention', label: 'Zero-Retention' },
   { id: 'information-we-collect', label: 'Information we collect' },
   { id: 'what-we-dont-collect', label: "What we don't collect" },
   { id: 'google-user-data', label: 'Google user data' },
@@ -26,10 +26,10 @@ export default function Privacy() {
     <LegalPage title="Privacy Policy" toc={TOC} contactEmail="privacy@drivetag-ai.com">
       <LegalSection id="overview" heading="Overview">
         <p>
-          DriveTag AI ("DriveTag", "we", "us") organizes visual assets for creative agencies and freelancers by
-          watching a Google Drive folder you choose, classifying each new image with AI, and renaming and moving it
-          automatically. This policy explains what information we collect to run that service, why, and what we
-          deliberately don't collect.
+          DriveTag AI ("DriveTag", "we", "us") organizes visual assets and documents for creative agencies and
+          freelancers by watching Google Drive folders you choose, classifying each new image or document with AI,
+          and renaming and moving it automatically. This policy explains what information we collect to run that
+          service, why, and what we deliberately don't collect.
         </p>
         <p>This policy covers drivetag-ai.com and the DriveTag AI application and API. It does not cover files you store in Google Drive, which Google's own privacy policy governs.</p>
       </LegalSection>
@@ -45,15 +45,18 @@ export default function Privacy() {
         </p>
       </LegalSection>
 
-      <LegalSection id="zero-retention" heading="Zero-Retention for images">
-        <p>This is the core of how DriveTag handles your content:</p>
+      <LegalSection id="zero-retention" heading="Zero-Retention">
+        <p>This is the core of how DriveTag handles your content, whether it's an image or a document — everything happens in server memory only, and nothing is written to disk, a database, or a storage bucket:</p>
         <ul className="list-disc space-y-2 pl-5">
-          <li>When a new image lands in your Raw folder, DriveTag downloads its bytes into server memory only.</li>
-          <li>Those bytes are sent to our AI provider inline, as part of the classification request itself — never uploaded to a file store, ours or the provider's.</li>
-          <li>Once the file is renamed and moved in your Drive, the bytes are discarded from memory. DriveTag never writes an image to disk, a database, or a storage bucket.</li>
+          <li><strong>Images</strong> — downloaded into memory and sent to our AI provider inline, as part of the classification request itself, never uploaded to a file store, ours or the provider's.</li>
+          <li><strong>PDFs</strong> — downloaded into memory and, if longer than 5 pages, trimmed in memory to their first 5 pages before being sent to our AI provider inline. Sending only those pages, not the file, keeps the rest of a long PDF out of the request entirely.</li>
+          <li><strong>Word (.docx) and text, Markdown or CSV files</strong> — read into memory, with only the first roughly 12,000 characters of their text sent to our AI provider.</li>
+          <li><strong>Google Docs, Sheets and Slides</strong> — exported by the Google Drive API as plain text or CSV into memory, with only the first roughly 12,000 characters sent to our AI provider.</li>
+          <li>Once the file is renamed and moved in your Drive, whatever was read is discarded from memory. Files over 20 MB are skipped, and never downloaded, before this even starts.</li>
+          <li>Google Docs, Sheets and Slides edited in the last 10 minutes are left alone until a later check — someone may still be writing them.</li>
         </ul>
         <p>
-          Our AI provider, Google LLC, processes the image under its paid API terms: it does not use submitted
+          Our AI provider, Google LLC, processes this content under its paid API terms: it does not use submitted
           content to train or improve its models, and it may retain request data for up to 55 days solely to detect
           and prevent abuse. We are telling you this plainly rather than claiming no one, anywhere, ever retains
           anything — that would not be accurate. See{' '}
@@ -71,9 +74,9 @@ export default function Privacy() {
           <li><strong>Google Drive access</strong> — an encrypted (AES-256-GCM) Drive refresh token, and the Drive watch-channel id and change-feed page token we use to detect new files.</li>
           <li><strong>Work process settings</strong> — the folder ids and names you choose, destination names and descriptions, your naming template, custom tag fields, AI instructions, and time zone.</li>
           <li>
-            <strong>Activity ledger</strong> — for each file DriveTag processes: the Drive file id, original file name, new file name, the AI-generated tags and custom field values, the destination it was sorted to, its status, any error message, and timestamps. We keep this so you can see your sorting history in the dashboard, and so a file is never sorted twice.
+            <strong>Activity ledger</strong> — for each file DriveTag processes: the Drive file id, original file name, new file name, whether it's an image or a document, the AI's classification fields (subject, style and genre for images; document type, topic, the organization or person it's from or for, and the date shown on the document for documents), any custom field values, the destination it was sorted to, its status, any error message, and timestamps. We keep this so you can see your sorting history in the dashboard, and so a file is never sorted twice. The organization/person field and custom fields can contain names taken from the text of your documents — this is personal data, and we keep it for the life of your account, the same as the rest of this ledger, and delete it when you delete your account.
           </li>
-          <li><strong>Plan and usage</strong> — your plan, subscription status, image usage counters, and (once payments exist) purchase references for credit top-ups.</li>
+          <li><strong>Plan and usage</strong> — your plan, subscription status, image and document usage counters, and (once payments exist) purchase references for credit top-ups.</li>
           <li><strong>Browser storage</strong> — your Supabase sign-in session and your cookie/analytics choice, both in your browser's local storage. See our{' '}
             <Link to="/cookies" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">Cookie Policy</Link> for details.
           </li>
@@ -84,7 +87,7 @@ export default function Privacy() {
       <LegalSection id="what-we-dont-collect" heading="What we don't collect">
         <p>We built DriveTag to need as little of your data as possible. We deliberately do not collect or keep:</p>
         <ul className="list-disc space-y-2 pl-5">
-          <li>Copies of your images or other file contents</li>
+          <li>Copies of your images or documents, or the text extracted from them</li>
           <li>Passwords — sign-in is Google only, so we never see or store one</li>
           <li>Payment card data</li>
           <li>Advertising trackers, fingerprinting scripts, or cross-site tracking</li>
@@ -103,8 +106,8 @@ export default function Privacy() {
         <p>With that access, here is exactly what DriveTag does and doesn't do:</p>
         <ul className="list-disc space-y-2 pl-5">
           <li>It reads folder names when you browse Drive to pick a Raw, Master or destination folder.</li>
-          <li>It reads your Drive changes feed, pulling only enough file metadata to tell whether a changed file is an image inside one of your Raw folders. Everything else in the feed is ignored and never stored.</li>
-          <li>It reads the bytes of images inside your Raw folders, in memory only, as described under Zero-Retention above.</li>
+          <li>It reads your Drive changes feed, pulling only enough file metadata to tell whether a changed file is an image or document inside one of your Raw folders. Everything else in the feed is ignored and never stored.</li>
+          <li>It reads the bytes or text of images and documents inside your Raw folders, in memory only, as described under Zero-Retention above.</li>
           <li>It creates folders when you ask it to.</li>
           <li>It never deletes files.</li>
         </ul>
@@ -131,7 +134,7 @@ export default function Privacy() {
 
       <LegalSection id="how-we-use-information" heading="How we use information">
         <ul className="list-disc space-y-2 pl-5">
-          <li>To run the core service: detect new images, classify them, and rename/move them per your settings.</li>
+          <li>To run the core service: detect new images and documents, classify them, and rename/move them per your settings.</li>
           <li>To operate your account: authentication, plan limits, usage metering, and support.</li>
           <li>To show you your sorting history and current usage in the dashboard.</li>
           <li>To keep the service secure and reliable, and to debug problems.</li>

@@ -82,7 +82,7 @@ export default function Login() {
       <main id="main-content" className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-16 pt-6 lg:grid-cols-2 lg:pt-12">
         <div className="login-art hidden lg:block">
           <h2 className="mb-2 text-3xl font-bold tracking-tight">Drop. Tag. Sorted.</h2>
-          <p className="mb-6 max-w-md text-ink-soft">This is what happens every time an image lands in your Raw folder.</p>
+          <p className="mb-6 max-w-md text-ink-soft">This is what happens every time an image or document lands in your Raw folder.</p>
           <TagFlowIllustration />
         </div>
 
@@ -126,7 +126,7 @@ export default function Login() {
           </div>
 
           <p data-enter className="mt-6 text-center text-xs leading-relaxed text-ink-soft">
-            Zero-Retention: DriveTag processes your images in memory and never stores them.
+            Zero-Retention: DriveTag processes your images and documents in memory and never stores them.
           </p>
         </div>
       </main>

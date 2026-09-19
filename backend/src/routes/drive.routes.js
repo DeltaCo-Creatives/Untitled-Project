@@ -139,7 +139,8 @@ router.post("/organize", async (req, res) => {
   if (processes.length === 0) {
     return res.status(409).json({ error: "Select folders first" });
   }
-  if (!entitlement || entitlement.credits <= 0) {
+  // Legacy, kind-blind endpoint: every active process runs, of whichever kinds still have credits.
+  if (!entitlement || entitlement.credits.image + entitlement.credits.document <= 0) {
     return res.status(402).json({ error: "You're out of images, so tagging is paused." });
   }
   if (isSweeping(userId)) {

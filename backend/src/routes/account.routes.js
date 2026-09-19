@@ -45,7 +45,7 @@ router.get("/me", async (req, res) => {
     subscription: entitlement
       ? { status: entitlement.usage.status, plan: plan.id, trialEndsAt: null, currentPeriodEnd: usage.periodResetsAt }
       : null,
-    entitled: Boolean(entitlement && entitlement.credits > 0),
+    entitled: Boolean(entitlement && (entitlement.credits.image > 0 || entitlement.credits.document > 0)),
   });
 });
 

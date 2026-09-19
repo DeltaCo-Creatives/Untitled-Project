@@ -17,14 +17,16 @@ import {
   PartyPopper,
   Plus,
   RefreshCw,
+  Shapes,
   Sparkles,
   X,
 } from 'lucide-react';
 import { api, ApiError, type CurrentPlan, type DestinationInput, type MeResponse, type Usage } from '../lib/api';
+import type { ProcessKind } from '../lib/filename';
 import { gsap, useGSAP, Flip, MOTION_OK, prefersReducedMotion } from '../lib/gsap';
 import { burstConfetti } from '../lib/confetti';
 import { browserTimeZone, formatCount } from '../lib/format';
-import { errorMessage, friendlyWatchError, usageSummary } from '../lib/messages';
+import { errorMessage, friendlyWatchError, kindUsageOf, kindWord, usageSummary } from '../lib/messages';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { Button } from '../components/ui/Button';
@@ -33,13 +35,16 @@ import { TextField } from '../components/ui/TextField';
 import { FolderBrowser } from '../components/drive/FolderBrowser';
 import { FolderPickerField } from '../components/drive/FolderPickerField';
 import type { DisabledFolders, PickedFolder } from '../components/drive/types';
+import { DEFAULT_TEMPLATE_BY_KIND } from '../components/processes/processDraft';
+import { ProcessKindPicker } from '../components/processes/ProcessKindPicker';
 
-type Step = 'loading' | 'connect' | 'raw' | 'sorting' | 'live';
+type Step = 'loading' | 'connect' | 'kind' | 'raw' | 'sorting' | 'live';
 
-const STEP_INDEX: Record<Step, number> = { loading: 0, connect: 0, raw: 1, sorting: 2, live: 3 };
+const STEP_INDEX: Record<Step, number> = { loading: 0, connect: 0, kind: 1, raw: 2, sorting: 3, live: 4 };
 
 const STEPS = [
   { label: 'Connect Drive', icon: HardDrive },
+  { label: 'What to sort', icon: Shapes },
   { label: 'Raw folder', icon: FolderInput },
   { label: 'Sorting', icon: FolderTree },
   { label: 'Go live', icon: Sparkles },
@@ -50,7 +55,6 @@ const NAME_MAX = 60;
 const DESCRIPTION_MAX = 300;
 /** Onboarding keeps the first process simple; the full editor allows many more. */
 const MAX_ROWS = 3;
-const RENAME_TEMPLATE = '{destination}_{subject}';
 const UNSORTED = 'Unsorted';
 const FIRST_PROCESS_NAME = 'My first process';
 
@@ -59,11 +63,18 @@ interface Example {
   description: string;
 }
 
-const EXAMPLES: Example[] = [
-  { name: 'Logos', description: 'brand marks, wordmarks, app icons' },
-  { name: 'Graphics', description: 'banners, social posts' },
-  { name: 'Photos', description: 'product and team photos' },
-];
+const EXAMPLES_BY_KIND: Record<ProcessKind, Example[]> = {
+  image: [
+    { name: 'Logos', description: 'brand marks, wordmarks, app icons' },
+    { name: 'Graphics', description: 'banners, social posts' },
+    { name: 'Photos', description: 'product and team photos' },
+  ],
+  document: [
+    { name: 'Invoices', description: 'bills and receipts from suppliers' },
+    { name: 'Contracts', description: 'signed agreements and NDAs' },
+    { name: 'Reports', description: 'briefs, proposals and write-ups' },
+  ],
+};
 
 const ROW_TINTS = ['bg-lavender', 'bg-periwinkle', 'bg-butter'];
 
@@ -92,14 +103,16 @@ function makeRow(example: Example, prefill: boolean): DestinationRow {
   };
 }
 
-function initialRows() {
-  return [makeRow(EXAMPLES[0], true), makeRow(EXAMPLES[2], true)];
+function initialRows(kind: ProcessKind) {
+  const examples = EXAMPLES_BY_KIND[kind];
+  return [makeRow(examples[0], true), makeRow(examples[2], true)];
 }
 
 /** The first example no row is already using, by name or by placeholder. */
-function nextExample(rows: DestinationRow[]) {
+function nextExample(rows: DestinationRow[], kind: ProcessKind) {
+  const examples = EXAMPLES_BY_KIND[kind];
   const taken = new Set(rows.flatMap((row) => [row.example.name.toLowerCase(), row.name.trim().toLowerCase()]));
-  return EXAMPLES.find((example) => !taken.has(example.name.toLowerCase())) ?? EXAMPLES[rows.length % EXAMPLES.length];
+  return examples.find((example) => !taken.has(example.name.toLowerCase())) ?? examples[rows.length % examples.length];
 }
 
 /**
@@ -126,9 +139,9 @@ function omit(errors: FieldErrors, keys: string[]) {
   return next;
 }
 
-function validateSorting(raw: PickedFolder | null, master: PickedFolder | null, rows: DestinationRow[]): FieldErrors {
+function validateSorting(raw: PickedFolder | null, master: PickedFolder | null, rows: DestinationRow[], kind: ProcessKind): FieldErrors {
   const errors: FieldErrors = {};
-  if (!master) errors.master = 'Choose the Master folder your sorted images go into.';
+  if (!master) errors.master = `Choose the Master folder your sorted ${kindWord(kind, 2)} go into.`;
   else if (raw && master.id === raw.id) errors.master = 'The Master folder has to be different from your Raw folder.';
 
   if (rows.length === 0) errors.destinations = 'Add at least one destination.';
@@ -140,7 +153,8 @@ function validateSorting(raw: PickedFolder | null, master: PickedFolder | null, 
     const key = rowKey(row.localId, 'name');
     if (!name) errors[key] = 'Give this destination a name.';
     else if (name.length > NAME_MAX) errors[key] = `Keep names to ${NAME_MAX} characters or fewer.`;
-    else if (lower === UNSORTED.toLowerCase()) errors[key] = '“Unsorted” is already there for images that fit nowhere else.';
+    else if (lower === UNSORTED.toLowerCase())
+      errors[key] = `“Unsorted” is already there for ${kindWord(kind, 2)} that don’t clearly fit another destination.`;
     else if (seen.has(lower)) errors[key] = `Two destinations are called “${name}”.`;
     if (name) seen.add(lower);
 
@@ -180,11 +194,11 @@ function fieldErrorsFromApi(err: unknown, rows: DestinationRow[]) {
 }
 
 /** Onboarding only sets up the first process: anyone who already has one belongs on the dashboard. */
-async function loadAccountState(): Promise<{ me: MeResponse; next: 'connect' | 'raw' | 'dashboard' }> {
+async function loadAccountState(): Promise<{ me: MeResponse; next: 'connect' | 'kind' | 'dashboard' }> {
   const me = await api.me();
   if (!me.driveConnected) return { me, next: 'connect' };
   const { processes } = await api.processes.list();
-  return { me, next: processes.length > 0 ? 'dashboard' : 'raw' };
+  return { me, next: processes.length > 0 ? 'dashboard' : 'kind' };
 }
 
 function processNameFor(raw: PickedFolder) {
@@ -193,21 +207,24 @@ function processNameFor(raw: PickedFolder) {
   return folderName && name.length <= NAME_MAX ? name : FIRST_PROCESS_NAME;
 }
 
-function planNoteFor(plan: CurrentPlan | null, usage: Usage | null) {
+function planNoteFor(plan: CurrentPlan | null, usage: Usage | null, kind: ProcessKind) {
+  const freeLimitFor = (planValue: CurrentPlan | null) =>
+    kind === 'document' ? planValue?.freeDocuments : planValue?.freeImages;
   if (!plan || !usage) {
-    const freeImages = plan?.freeImages ?? usage?.freeLimit;
+    const freeCount = freeLimitFor(plan) ?? (usage ? kindUsageOf(usage, kind).freeLimit : undefined);
     return {
-      text: freeImages
-        ? `Free plan: your first ${formatCount(freeImages)} images are on us.`
+      text: freeCount
+        ? `Free plan: your first ${formatCount(freeCount)} ${kindWord(kind, 2)} are on us.`
         : 'You start on the Free plan, no credit card needed.',
       exhausted: false,
     };
   }
-  if (usage.exhausted) return { text: usageSummary(plan, usage), exhausted: true };
-  if (plan.id === 'free' && usage.freeUsed === 0) {
-    return { text: `Free plan: your first ${formatCount(plan.freeImages)} images are on us.`, exhausted: false };
+  const kindUsage = kindUsageOf(usage, kind);
+  if (kindUsage.exhausted) return { text: usageSummary(plan, usage, kind), exhausted: true };
+  if (plan.id === 'free' && kindUsage.freeUsed === 0) {
+    return { text: `Free plan: your first ${formatCount(freeLimitFor(plan) ?? 0)} ${kindWord(kind, 2)} are on us.`, exhausted: false };
   }
-  return { text: `${plan.label} plan: ${usageSummary(plan, usage)}`, exhausted: false };
+  return { text: `${plan.label} plan: ${usageSummary(plan, usage, kind)}`, exhausted: false };
 }
 
 export default function Onboarding() {
@@ -233,9 +250,10 @@ export default function Onboarding() {
   const [plan, setPlan] = useState<CurrentPlan | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
 
+  const [kind, setKind] = useState<ProcessKind | null>(null);
   const [raw, setRaw] = useState<PickedFolder | null>(null);
   const [master, setMaster] = useState<PickedFolder | null>(null);
-  const [rows, setRows] = useState<DestinationRow[]>(initialRows);
+  const [rows, setRows] = useState<DestinationRow[]>(() => initialRows('image'));
   /** Rows fading out but not yet removed; they still count toward `rows`. */
   const [leaving, setLeaving] = useState<string[]>([]);
 
@@ -248,7 +266,7 @@ export default function Onboarding() {
   const view = loadError ? 'error' : step;
   const rowsKey = rows.map((row) => row.localId).join('|');
 
-  const sortingErrors = validateSorting(raw, master, rows);
+  const sortingErrors = validateSorting(raw, master, rows, kind ?? 'image');
   const errorFor = (key: string) => (showErrors ? sortingErrors[key] : undefined) ?? serverErrors[key] ?? null;
   const fieldId = (localId: string, field: RowField) => `${fieldPrefix}-${localId}-${field}`;
 
@@ -310,6 +328,12 @@ export default function Onboarding() {
     }
   };
 
+  const pickKind = (nextKind: ProcessKind) => {
+    setKind(nextKind);
+    setRows(initialRows(nextKind));
+    goTo('raw', step);
+  };
+
   const pickRaw = (folder: PickedFolder) => {
     setRaw(folder);
     goTo('sorting', step);
@@ -327,7 +351,7 @@ export default function Onboarding() {
 
   const addRow = () => {
     if (rows.length >= MAX_ROWS) return;
-    const row = makeRow(nextExample(rows), false);
+    const row = makeRow(nextExample(rows, kind ?? 'image'), false);
     if (!prefersReducedMotion()) {
       rowTops.current = measureRowFlow(pageRef.current);
       enteringRow.current = row.localId;
@@ -410,7 +434,7 @@ export default function Onboarding() {
   };
 
   const handleStart = async (event: MouseEvent<HTMLButtonElement>) => {
-    if (!raw || !master || saving) return;
+    if (!raw || !master || !kind || saving) return;
     const origin = event.currentTarget;
     const submitted = rows;
     setError(null);
@@ -430,10 +454,11 @@ export default function Onboarding() {
 
     try {
       await api.processes.create({
+        kind,
         name: processNameFor(raw),
         rawFolderId: raw.id,
         masterFolderId: master.id,
-        renameTemplate: RENAME_TEMPLATE,
+        renameTemplate: DEFAULT_TEMPLATE_BY_KIND[kind],
         instructions: '',
         timezone: browserTimeZone(),
         tagFields: [],
@@ -594,7 +619,7 @@ export default function Onboarding() {
 
   // ---------------------------------------------------------------- render
 
-  const planNote = planNoteFor(plan, usage);
+  const planNote = planNoteFor(plan, usage, kind ?? 'image');
   const destinationsError = errorFor('destinations');
 
   return (
@@ -611,7 +636,7 @@ export default function Onboarding() {
 
       <main id="main-content" className="px-4 pb-16 pt-4 sm:pt-10">
         <div className="onboarding-card mx-auto w-full max-w-2xl rounded-[2rem] border border-line bg-white p-5 shadow-lift sm:p-10">
-          <ol ref={stepperRef} aria-label="Setup steps" className="mb-6 grid grid-cols-4 gap-1 rounded-2xl bg-lavender-soft p-1.5">
+          <ol ref={stepperRef} aria-label="Setup steps" className="mb-6 grid grid-cols-5 gap-1 rounded-2xl bg-lavender-soft p-1.5">
             {STEPS.map((item, i) => {
               const active = i === stepIndex;
               const done = i < stepIndex;
@@ -707,8 +732,8 @@ export default function Onboarding() {
                 </p>
                 <ul className="mx-auto mb-8 max-w-md space-y-1.5 text-left text-sm leading-relaxed text-ink-soft">
                   <li className="flex gap-2">
-                    <Check aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-sage-deep" /> Read images others add to
-                    your Raw folders
+                    <Check aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-sage-deep" /> Read images and documents
+                    others add to your Raw folders
                   </li>
                   <li className="flex gap-2">
                     <Check aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-sage-deep" /> Rename and move them into
@@ -729,6 +754,21 @@ export default function Onboarding() {
                   Connect Google Drive <ArrowRight className="h-4 w-4" />
                 </Button>
               </div>
+            ) : step === 'kind' ? (
+              <div className="py-2 text-center">
+                <div className="step-hero-icon mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-lavender to-periwinkle shadow-soft">
+                  <Shapes className="h-9 w-9 text-ink" />
+                </div>
+                <h2 tabIndex={-1} className="mb-3 text-3xl font-bold tracking-tight outline-none">
+                  Images or documents?
+                </h2>
+                <p className="mx-auto mb-8 max-w-md leading-relaxed text-ink-soft">
+                  Pick one — you can always create another process for the other kind later.
+                </p>
+                <div className="mx-auto max-w-md text-left">
+                  <ProcessKindPicker value={kind} onChange={pickKind} name="onboarding-kind" />
+                </div>
+              </div>
             ) : step === 'raw' ? (
               <div>
                 <div className="mb-6 text-center">
@@ -739,8 +779,8 @@ export default function Onboarding() {
                     Pick your Raw folder
                   </h2>
                   <p className="mx-auto max-w-md leading-relaxed text-ink-soft">
-                    The folder where you and your team drop unsorted images. DriveTag watches it and sorts anything new
-                    that lands there.
+                    The folder where you and your team drop unsorted {kindWord(kind, 2)}. DriveTag watches it and sorts
+                    anything new that lands there.
                   </p>
                 </div>
 
@@ -770,7 +810,8 @@ export default function Onboarding() {
                     Tell DriveTag where things go
                   </h2>
                   <p className="mx-auto max-w-md leading-relaxed text-ink-soft">
-                    The AI looks at each new image and picks the destination whose name and description fit it best.
+                    The AI looks at each new {kindWord(kind, 1)} and picks the destination whose name and description fit
+                    it best.
                   </p>
                 </div>
 
@@ -779,7 +820,7 @@ export default function Onboarding() {
                     label="Master folder"
                     value={master}
                     onChange={pickMaster}
-                    hint="Sorted images go into folders inside this one."
+                    hint={`Sorted ${kindWord(kind, 2)} go into folders inside this one.`}
                     error={errorFor('master')}
                     disabledFolders={rawDisabled}
                     tone="sage"
@@ -894,7 +935,8 @@ export default function Onboarding() {
                     <p className="flex items-start gap-2 rounded-2xl bg-periwinkle-soft px-4 py-3 text-sm leading-relaxed text-ink">
                       <Info className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>
-                        DriveTag creates these folders inside your Master folder. Images that fit none go to Unsorted.
+                        DriveTag creates these folders inside your Master folder. Any {kindWord(kind, 2)} that fit none go
+                        to Unsorted.
                       </span>
                     </p>
 
@@ -924,9 +966,9 @@ export default function Onboarding() {
                   Ready to go live
                 </h2>
                 <p className="mx-auto mb-7 max-w-md leading-relaxed text-ink-soft">
-                  New images dropped into <strong className="text-ink">{raw?.name}</strong> get sorted automatically:
-                  tagged, renamed and moved into the right folder inside{' '}
-                  <strong className="text-ink">{master?.name}</strong>. Images already in there wait on your dashboard
+                  New {kindWord(kind, 2)} dropped into <strong className="text-ink">{raw?.name}</strong> get sorted
+                  automatically: tagged, renamed and moved into the right folder inside{' '}
+                  <strong className="text-ink">{master?.name}</strong>. Files already in there wait on your dashboard
                   until you choose <strong className="text-ink">Organize now</strong>.
                 </p>
 
@@ -970,7 +1012,7 @@ export default function Onboarding() {
                   <p className="mx-auto mb-7 flex max-w-md items-start gap-2 rounded-2xl bg-rose-soft px-4 py-3 text-left text-sm font-semibold text-rose-ink">
                     <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
-                      {planNote.text} New images wait in Raw until then.{' '}
+                      {planNote.text} New {kindWord(kind, 2)} wait in Raw until then.{' '}
                       <Link
                         to="/plans"
                         className="rounded underline underline-offset-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60"

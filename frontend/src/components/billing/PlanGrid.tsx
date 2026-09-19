@@ -2,9 +2,12 @@ import { useRef } from 'react';
 import type { PlanId, PlanInfo } from '../../lib/api';
 import { gsap, useGSAP, MOTION_OK } from '../../lib/gsap';
 import { PlanCard } from './PlanCard';
+import { bundleSavings, plansForFamily, type FamilyChoice } from './planFeatures';
 
 interface PlanGridProps {
+  /** The full plan list from GET /api/plans — filtered here to Free plus the selected family's tiers. */
   plans: PlanInfo[];
+  family: FamilyChoice;
   currency: string;
   /** false while no payment provider is integrated: purchase buttons show "Coming soon" instead. */
   currentPlanId?: PlanId | null;
@@ -13,10 +16,12 @@ interface PlanGridProps {
   compact?: boolean;
 }
 
-export function PlanGrid({ plans, currency, currentPlanId = null, signedIn = false, compact = false }: PlanGridProps) {
+export function PlanGrid({ plans, family, currency, currentPlanId = null, signedIn = false, compact = false }: PlanGridProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const visiblePlans = plansForFamily(plans, family);
 
-  // Cards rise in one after another when the grid scrolls into view, then their checks pop.
+  // Cards rise in one after another when the grid scrolls into view, then their checks pop. Replays whenever the
+  // family switches, since the visible cards change (revertOnUpdate cleans up the previous timeline/ScrollTrigger).
   useGSAP(
     () => {
       const root = ref.current;
@@ -51,13 +56,13 @@ export function PlanGrid({ plans, currency, currentPlanId = null, signedIn = fal
       });
       return () => mm.revert();
     },
-    { scope: ref },
+    { dependencies: [family], scope: ref, revertOnUpdate: true },
   );
 
   return (
     <div ref={ref}>
       <div className={`grid md:grid-cols-2 xl:grid-cols-4 ${compact ? 'gap-5' : 'gap-6'}`}>
-        {plans.map((plan) => (
+        {visiblePlans.map((plan) => (
           <div key={plan.id} className="plan-cell">
             <PlanCard
               plan={plan}
@@ -65,6 +70,7 @@ export function PlanGrid({ plans, currency, currentPlanId = null, signedIn = fal
               current={plan.id === currentPlanId}
               signedIn={signedIn}
               compact={compact}
+              savingsNote={bundleSavings(plans, plan, currency)}
             />
           </div>
         ))}

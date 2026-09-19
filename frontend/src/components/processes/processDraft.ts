@@ -1,6 +1,8 @@
 import { ApiError, type DestinationInput, type ProcessInput, type ProcessLimits, type WorkProcess } from '../../lib/api';
-import { TEMPLATE_TOKENS, slugify, validateTemplate } from '../../lib/filename';
+import { TEMPLATE_TOKENS_BY_KIND, slugify, validateTemplate, type ProcessKind } from '../../lib/filename';
 import type { DisabledFolders, PickedFolder } from '../drive/types';
+
+export type { ProcessKind };
 
 // Form state and rules for the work-process editor. The rules mirror
 // backend/src/utils/processValidation.js (same field paths, same limits), so the
@@ -29,6 +31,8 @@ export interface TagFieldDraft {
 }
 
 export interface ProcessDraft {
+  /** null only for a brand new, not-yet-created process: the kind picker requires an explicit choice. */
+  kind: ProcessKind | null;
   name: string;
   raw: PickedFolder | null;
   master: PickedFolder | null;
@@ -41,15 +45,28 @@ export interface ProcessDraft {
 
 export type FieldErrors = Record<string, string>;
 
-export const DEFAULT_TEMPLATE = '{destination}_{subject}';
+/** Starting naming template per kind: unchanged for images, {type}_{organization}_{topic} for documents. */
+export const DEFAULT_TEMPLATE_BY_KIND: Record<ProcessKind, string> = {
+  image: '{destination}_{subject}',
+  document: '{type}_{organization}_{topic}',
+};
+/** Kept for callers that only ever dealt with images. */
+export const DEFAULT_TEMPLATE = DEFAULT_TEMPLATE_BY_KIND.image;
 export const UNSORTED_NAME = 'Unsorted';
 /** The quick (onboarding) form suggests starting small. */
 export const QUICK_DESTINATION_LIMIT = 3;
 export const TAG_KEY_MAX = 32;
 
 const TAG_KEY = /^[a-z][a-z0-9_]{0,31}$/;
-// Tag keys share the response schema and template namespace with these.
-const RESERVED_TAG_KEYS = new Set([...TEMPLATE_TOKENS, 'tag', 'tags', 'ext', 'unsorted', 'fields']);
+// A tag key shares the AI response schema and the template namespace with the process's own naming
+// tokens, so it can't reuse one of them. Only the process's own kind is reserved: an image process
+// may keep a "type" or "topic" tag (existing ones do), since those names only mean something to
+// document processes, and vice versa. Mirrors RESERVED_TAG_KEYS_BY_KIND in backend/src/utils/processValidation.js.
+const RESERVED_WORDS = ['tag', 'tags', 'ext', 'unsorted', 'fields'];
+const RESERVED_TAG_KEYS_BY_KIND: Record<ProcessKind, Set<string>> = {
+  image: new Set([...TEMPLATE_TOKENS_BY_KIND.image, ...RESERVED_WORDS]),
+  document: new Set([...TEMPLATE_TOKENS_BY_KIND.document, ...RESERVED_WORDS]),
+};
 const SEPARATORS = '-_. ';
 
 /** Same numbers as PROCESS_LIMITS in backend/src/config/plans.js, used if /api/plans can't be loaded. */
@@ -75,7 +92,7 @@ export const PROCESS_SECTIONS = [
 
 export type ProcessSectionId = (typeof PROCESS_SECTIONS)[number]['id'];
 
-/** Which editor section shows the error for a server field path. */
+/** Which editor section shows the error for a server field path. The kind picker sits right above Basics. */
 export function sectionOfField(field: string): ProcessSectionId {
   if (field.startsWith('destinations')) return 'destinations';
   if (field.startsWith('tagFields')) return 'tags';
@@ -84,20 +101,35 @@ export function sectionOfField(field: string): ProcessSectionId {
   return 'basics';
 }
 
-/** One-click starting points shown under the destination list. */
-export const DESTINATION_IDEAS = [
-  { name: 'Logos', description: 'Brand marks, wordmarks and app icons.' },
-  { name: 'Product shots', description: 'Products on a plain or studio background, packshots and flat lays.' },
-  { name: 'Lifestyle', description: 'People using products, candid moments and on-location photos.' },
-  { name: 'Social graphics', description: 'Designed posts, banners and ads with text on them.' },
-];
+/** One-click starting points shown under the destination list, per process kind. */
+export const DESTINATION_IDEAS_BY_KIND: Record<ProcessKind, { name: string; description: string }[]> = {
+  image: [
+    { name: 'Logos', description: 'Brand marks, wordmarks and app icons.' },
+    { name: 'Product shots', description: 'Products on a plain or studio background, packshots and flat lays.' },
+    { name: 'Lifestyle', description: 'People using products, candid moments and on-location photos.' },
+    { name: 'Social graphics', description: 'Designed posts, banners and ads with text on them.' },
+  ],
+  document: [
+    { name: 'Invoices', description: 'Bills and receipts from suppliers.' },
+    { name: 'Contracts', description: 'Signed agreements and NDAs.' },
+    { name: 'Reports', description: 'Briefs, proposals and write-ups.' },
+    { name: 'Statements', description: 'Bank, financial or account statements.' },
+  ],
+};
 
-/** Examples offered when a process has no tag fields yet. */
-export const TAG_FIELD_IDEAS = [
-  { label: 'Client', description: 'The client or brand the image is for, when a logo or product makes it clear.' },
-  { label: 'Color palette', description: 'The two or three dominant colors, like warm neutrals or teal and orange.' },
-  { label: 'Orientation', description: 'portrait, landscape or square.' },
-];
+/** Examples offered when a process has no tag fields yet, per process kind. */
+export const TAG_FIELD_IDEAS_BY_KIND: Record<ProcessKind, { label: string; description: string }[]> = {
+  image: [
+    { label: 'Client', description: 'The client or brand the image is for, when a logo or product makes it clear.' },
+    { label: 'Color palette', description: 'The two or three dominant colors, like warm neutrals or teal and orange.' },
+    { label: 'Orientation', description: 'portrait, landscape or square.' },
+  ],
+  document: [
+    { label: 'Invoice number', description: 'The invoice or reference number printed on the document, if there is one.' },
+    { label: 'Client', description: 'The client or vendor named on the document, when it’s clear.' },
+    { label: 'Document date', description: 'The date shown on the document itself, written out in full.' },
+  ],
+};
 
 let localCounter = 0;
 
@@ -122,10 +154,10 @@ function fallbackDraft(): DestinationDraft {
   return { ...newDestinationDraft({ name: UNSORTED_NAME }), isFallback: true };
 }
 
-export function newTagFieldDraft(label = '', description = '', takenKeys: string[] = []): TagFieldDraft {
+export function newTagFieldDraft(label = '', description = '', takenKeys: string[] = [], kind: ProcessKind = 'image'): TagFieldDraft {
   return {
     localId: nextLocalId('tag'),
-    key: deriveTagKey(label, takenKeys),
+    key: deriveTagKey(label, takenKeys, kind),
     label,
     description,
     keyEdited: false,
@@ -134,6 +166,7 @@ export function newTagFieldDraft(label = '', description = '', takenKeys: string
 
 export function emptyDraft(): ProcessDraft {
   return {
+    kind: null,
     name: '',
     raw: null,
     master: null,
@@ -165,10 +198,11 @@ export function draftFromProcess(process: WorkProcess): ProcessDraft {
   if (!destinations.some((destination) => destination.isFallback)) destinations.push(fallbackDraft());
 
   return {
+    kind: process.kind,
     name: process.name,
     raw: { id: process.rawFolderId, name: process.rawFolderName ?? 'Raw folder' },
     master: { id: process.masterFolderId, name: process.masterFolderName ?? 'Master folder' },
-    renameTemplate: process.renameTemplate || DEFAULT_TEMPLATE,
+    renameTemplate: process.renameTemplate || DEFAULT_TEMPLATE_BY_KIND[process.kind],
     instructions: process.instructions ?? '',
     // Saved keys may already be used in names, so they never follow label edits.
     tagFields: process.tagFields.map((field) => ({
@@ -189,6 +223,8 @@ function normalizeKey(key: string) {
 
 export function toProcessInput(draft: ProcessDraft, timezone: string): ProcessInput {
   return {
+    // Falls back to 'image' only while a new draft's kind is still unset; validateDraft blocks saving before then.
+    kind: draft.kind ?? 'image',
     name: draft.name.trim(),
     rawFolderId: draft.raw?.id ?? '',
     masterFolderId: draft.master?.id ?? '',
@@ -231,6 +267,10 @@ export function validateDraft(draft: ProcessDraft, limits: ProcessLimits, otherP
     if (!(field in errors)) errors[field] = message;
   };
 
+  if (!draft.kind) fail('kind', 'Choose what this process sorts.');
+  const kind = draft.kind ?? 'image';
+  const nouns = kind === 'document' ? 'documents' : 'images';
+
   const name = draft.name.trim();
   if (!name) fail('name', 'Give this process a name.');
   else if (name.length > limits.nameMax) fail('name', `Keep the name under ${limits.nameMax} characters.`);
@@ -238,7 +278,7 @@ export function validateDraft(draft: ProcessDraft, limits: ProcessLimits, otherP
   const rawFolderId = draft.raw?.id ?? '';
   const masterFolderId = draft.master?.id ?? '';
   if (!rawFolderId) fail('rawFolderId', 'Choose the Raw folder DriveTag watches.');
-  if (!masterFolderId) fail('masterFolderId', 'Choose the Master folder sorted images go into.');
+  if (!masterFolderId) fail('masterFolderId', `Choose the Master folder sorted ${nouns} go into.`);
   if (rawFolderId && rawFolderId === masterFolderId) {
     fail('masterFolderId', 'The Master folder has to be different from the Raw folder.');
   }
@@ -257,7 +297,7 @@ export function validateDraft(draft: ProcessDraft, limits: ProcessLimits, otherP
     const key = normalizeKey(field.key);
     const label = field.label.trim();
     if (!TAG_KEY.test(key)) fail(`${at}.key`, 'Use a short key: lowercase letters, numbers and _, starting with a letter.');
-    else if (RESERVED_TAG_KEYS.has(key)) fail(`${at}.key`, `“${key}” is already a built-in token; pick another key.`);
+    else if (RESERVED_TAG_KEYS_BY_KIND[kind].has(key)) fail(`${at}.key`, `“${key}” is already a built-in token; pick another key.`);
     else if (seenKeys.has(key)) fail(`${at}.key`, `Two tag fields use the key “${key}”.`);
     seenKeys.add(key);
     if (!label) fail(`${at}.label`, 'Give this tag field a label.');
@@ -271,7 +311,7 @@ export function validateDraft(draft: ProcessDraft, limits: ProcessLimits, otherP
   if (template.length > limits.templateMax) {
     fail('renameTemplate', `Keep the naming template under ${limits.templateMax} characters.`);
   } else {
-    const [problem] = validateTemplate(template, draft.tagFields.map((field) => normalizeKey(field.key)));
+    const [problem] = validateTemplate(template, draft.tagFields.map((field) => normalizeKey(field.key)), kind);
     if (problem) fail('renameTemplate', problem);
   }
 
@@ -305,11 +345,11 @@ export function validateDraft(draft: ProcessDraft, limits: ProcessLimits, otherP
     if (rawOwners.has(rawFolderId)) {
       fail('rawFolderId', `That’s already the Raw folder of “${rawOwners.get(rawFolderId)}”.`);
     } else if (sortedIntoOwners.has(rawFolderId)) {
-      fail('rawFolderId', `“${sortedIntoOwners.get(rawFolderId)}” sorts images into that folder, so it can’t be a Raw folder too.`);
+      fail('rawFolderId', `“${sortedIntoOwners.get(rawFolderId)}” sorts files into that folder, so it can’t be a Raw folder too.`);
     }
   }
   if (masterFolderId && rawOwners.has(masterFolderId)) {
-    fail('masterFolderId', `That’s the Raw folder of “${rawOwners.get(masterFolderId)}”; images would loop.`);
+    fail('masterFolderId', `That’s the Raw folder of “${rawOwners.get(masterFolderId)}”; files would loop.`);
   }
   draft.destinations.forEach((destination, index) => {
     const folderId =
@@ -317,7 +357,7 @@ export function validateDraft(draft: ProcessDraft, limits: ProcessLimits, otherP
     if (!folderId) return;
     const at = `destinations[${index}].folder`;
     if (folderId === rawFolderId) fail(at, 'That’s this process’s own Raw folder.');
-    else if (rawOwners.has(folderId)) fail(at, `That’s the Raw folder of “${rawOwners.get(folderId)}”; images would loop.`);
+    else if (rawOwners.has(folderId)) fail(at, `That’s the Raw folder of “${rawOwners.get(folderId)}”; files would loop.`);
   });
 
   return errors;
@@ -360,6 +400,8 @@ function errorScope(draft: ProcessDraft, field: string) {
     return JSON.stringify([draft.tagFields.map((entry) => entry.localId), draft.tagFields[Number(tagField[1])] ?? null]);
   }
   switch (field) {
+    case 'kind':
+      return draft.kind;
     case 'name':
       return draft.name;
     case 'rawFolderId':
@@ -420,13 +462,13 @@ export function disabledFoldersFor(
 
 // ------------------------------------------------------------------ tag keys
 
-/** "Color palette" → "color_palette", steering clear of built-in tokens and keys already in use. */
-export function deriveTagKey(label: string, takenKeys: Iterable<string> = []) {
+/** "Color palette" → "color_palette", steering clear of this kind's built-in tokens and keys already in use. */
+export function deriveTagKey(label: string, takenKeys: Iterable<string> = [], kind: ProcessKind = 'image') {
   const trimEnd = (value: string) => value.slice(0, TAG_KEY_MAX).replace(/_+$/, '');
   let base = trimEnd(slugify(label).replace(/-/g, '_'));
   if (!base) return '';
   if (!/^[a-z]/.test(base)) base = trimEnd(`tag_${base}`);
-  if (RESERVED_TAG_KEYS.has(base)) base = `${base}_tag`;
+  if (RESERVED_TAG_KEYS_BY_KIND[kind].has(base)) base = `${base}_tag`;
 
   const taken = new Set(takenKeys);
   let key = base;
@@ -446,9 +488,9 @@ export function normalizeTypedKey(value: string) {
     .slice(0, TAG_KEY_MAX);
 }
 
-export function isUsableTagKey(key: string) {
+export function isUsableTagKey(key: string, kind: ProcessKind = 'image') {
   const normalized = normalizeKey(key);
-  return TAG_KEY.test(normalized) && !RESERVED_TAG_KEYS.has(normalized);
+  return TAG_KEY.test(normalized) && !RESERVED_TAG_KEYS_BY_KIND[kind].has(normalized);
 }
 
 function removeToken(template: string, token: string) {

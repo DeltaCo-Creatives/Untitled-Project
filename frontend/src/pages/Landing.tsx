@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom';
 import {
   ArrowRight,
   Check,
+  FileText,
   FolderCheck,
   Gift,
   HardDrive,
+  Images,
   ShieldCheck,
   Sparkles,
   UploadCloud,
@@ -21,11 +23,11 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { ButtonLink } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
-import { Skeleton } from '../components/ui/Skeleton';
 import { TagFlowIllustration } from '../components/TagFlowIllustration';
 import { MemoryDemo } from '../components/MemoryDemo';
-import { PlanGrid } from '../components/billing/PlanGrid';
-import { TransparencyNote } from '../components/billing/TransparencyNote';
+import { DocumentFlowIllustration } from '../components/DocumentFlowIllustration';
+import { PageCapIllustration } from '../components/PageCapIllustration';
+import { LandingPricingSection } from '../components/billing/LandingPricingSection';
 import { freeImageAllowance } from '../components/billing/planFeatures';
 
 const STEPS = [
@@ -33,14 +35,15 @@ const STEPS = [
     icon: UploadCloud,
     bubble: 'bg-lavender',
     title: 'Drop it in',
-    description: 'Drag images into a Raw folder in Google Drive, from any device. No app to install, no upload screen.',
+    description:
+      'Drag images and documents into a Raw folder in Google Drive, from any device. No app to install, no upload screen.',
   },
   {
     icon: Sparkles,
     bubble: 'bg-butter',
-    title: 'The AI tags it',
+    title: 'The AI reads it',
     description:
-      'The moment a file lands, our AI reads it in memory, fills in your tags, and picks the destination that matches your descriptions — in seconds.',
+      'The moment a file lands, our AI reads it in memory — the pixels of an image, or the first pages of a document — fills in your tags, and picks the destination that matches your descriptions, in seconds.',
   },
   {
     icon: FolderCheck,
@@ -55,7 +58,8 @@ const FEATURES = [
     icon: ShieldCheck,
     bubble: 'bg-lavender-soft',
     title: 'Zero-Retention by design',
-    description: 'Images are processed in memory and discarded the instant the move completes — never written to a database or storage bucket.',
+    description:
+      'Images and documents are processed in memory and discarded the instant the move completes — never written to a database or storage bucket.',
   },
   {
     icon: HardDrive,
@@ -67,25 +71,45 @@ const FEATURES = [
     icon: Zap,
     bubble: 'bg-butter-soft',
     title: 'Powered by advanced AI',
-    description: 'Fast, consistent visual classification on every image, without anyone having to open it.',
+    description: 'Fast, consistent classification on every image and document, without anyone having to open it.',
   },
   {
     icon: Users,
     bubble: 'bg-sage-soft',
     title: 'Built for agencies & freelancers',
-    description: 'Run a work process per client or project for the daily flood of shoots, drafts, and deliverables that pile up in shared folders.',
+    description:
+      'Run a work process per client or project for the daily flood of shoots, invoices, and deliverables that pile up in shared folders.',
   },
 ];
 
 const PRIVACY_POINTS = [
-  'Images are processed in memory — never written to disk, a database, or a storage bucket.',
+  'Images and documents are processed in memory — never written to disk, a database, or a storage bucket.',
   'Sent to the AI inside the request itself — never uploaded to a file store.',
-  'The AI provider doesn’t use your images to train its models.',
+  'For a document, the AI reads only its first few pages — never the whole file.',
+  'The AI provider doesn’t use your files to train its models.',
   'We keep only what your history needs: filenames, tags, and status.',
   'Disconnect anytime — we revoke Google access and delete your stored token.',
 ];
 
-const FLOATING_TAGS = ['portrait', 'product', 'landscape', 'event', 'flat lay', 'golden hour'];
+const FLOATING_TAGS = ['portrait', 'invoice', 'product', 'contract', 'event', 'brief'];
+
+interface SortExample {
+  before: string;
+  after: string;
+  destination: string;
+}
+
+const IMAGE_SORT_EXAMPLES: SortExample[] = [
+  { before: 'IMG_4821.jpg', after: 'portrait_woman-smiling.jpg', destination: 'Portraits' },
+  { before: 'DSC_0192.png', after: 'product_ceramic-mug.png', destination: 'Product shots' },
+];
+
+const DOCUMENT_SORT_EXAMPLES: SortExample[] = [
+  { before: 'Scan_0042.pdf', after: 'invoice_acme_2026-08-31.pdf', destination: 'Invoices' },
+  { before: 'contract (draft) v3.docx', after: 'contract_northwind_nda.docx', destination: 'Contracts' },
+];
+
+const DOCUMENT_TYPES = ['PDF', 'Word (.docx)', 'Google Docs', 'Sheets', 'Slides', 'Text, Markdown & CSV'];
 
 export default function Landing() {
   useDocumentTitle('Auto-organize your Google Drive');
@@ -95,6 +119,10 @@ export default function Landing() {
   const ctaLabel = user ? 'Go to dashboard' : 'Get started free';
   const { plans, error: plansError } = usePlans();
   const freeImages = formatCount(freeImageAllowance(plans));
+  // The Free plan's lifetime document allowance — same "don't hard-code limits" rule as freeImageAllowance above.
+  const freeDocuments = formatCount(plans?.plans.find((p) => p.id === 'free')?.freeDocuments ?? 25);
+  const pagesRead = plans?.fileLimits.pagesRead ?? 5;
+  const textChars = plans?.fileLimits.textChars ?? 12000;
   // Pricing hides itself if plans can't load; the rest of the page doesn't depend on it.
   const pricingState = plansError ? 'hidden' : plans ? 'ready' : 'loading';
 
@@ -240,7 +268,7 @@ export default function Landing() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sage opacity-80 motion-reduce:animate-none" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-sage-deep" />
               </span>
-              Zero-Retention — DriveTag never stores your images
+              Zero-Retention — DriveTag never stores your files
             </div>
 
             <h1 className="hero-title mb-6 text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl lg:text-7xl">
@@ -260,9 +288,9 @@ export default function Landing() {
             </h1>
 
             <p className="hero-sub mx-auto mb-9 max-w-xl text-lg leading-relaxed text-ink-soft lg:mx-0">
-              DriveTag AI watches one Raw folder in your Google Drive, or many, each with its own AI work process. It tags
-              every image the moment it arrives, sorts it into destination folders you describe in plain words, and names
-              it your way with your own tags — so nobody sorts client assets by hand again.
+              DriveTag AI watches one Raw folder in your Google Drive, or many, each with its own AI work process. It reads
+              every image and document the moment it arrives, sorts it into destination folders you describe in plain
+              words, and names it your way with your own tags — so nobody sorts client files by hand again.
             </p>
 
             <div className="hero-cta flex flex-col items-center justify-center gap-3 sm:flex-row lg:justify-start">
@@ -277,7 +305,7 @@ export default function Landing() {
 
             <p className="hero-note mt-6 inline-flex items-center gap-2 rounded-2xl bg-butter-soft px-4 py-2 text-left text-sm font-bold text-ink sm:rounded-full">
               <Gift className="h-4 w-4 shrink-0" aria-hidden />
-              Free for your first {freeImages} images — no credit card, no time limit
+              Free for your first {freeImages} images and {freeDocuments} documents — no credit card, no time limit
             </p>
 
             <ul className="hero-trust mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm font-semibold text-ink-soft lg:justify-start">
@@ -339,6 +367,98 @@ export default function Landing() {
           </div>
         </section>
 
+        {/* What DriveTag sorts */}
+        <section id="sorts" className="mx-auto max-w-6xl scroll-mt-24 px-4 py-20">
+          <p data-reveal className="mb-3 text-center text-sm font-extrabold uppercase tracking-widest text-ink-soft">
+            What DriveTag sorts
+          </p>
+          <h2 data-reveal className="mb-4 text-center text-4xl font-bold tracking-tight sm:text-5xl">
+            One flow. Every file your clients send.
+          </h2>
+          <p data-reveal className="mx-auto mb-16 max-w-xl text-center text-lg text-ink-soft">
+            Images and documents both land in a Raw folder and come out named, tagged, and filed — no separate tool,
+            no separate habit to learn.
+          </p>
+
+          <div className="grid items-center gap-12 lg:grid-cols-2">
+            <div data-reveal>
+              <h3 className="mb-3 text-2xl font-semibold">Now it reads documents too</h3>
+              <p className="mb-5 leading-relaxed text-ink-soft">
+                PDFs, Word files, Google Docs, Sheets and Slides, and plain text or Markdown files move through the
+                same flow DriveTag already uses for photos: dropped in Raw, read in memory, renamed with your
+                template, and filed into the folder that matches. DriveTag reads only the first {pagesRead} pages of
+                a PDF — about {formatCount(textChars)} characters of text otherwise — so a five-page brief and a
+                two-hundred-page report cost the same to sort.
+              </p>
+              <ul className="flex flex-wrap gap-2">
+                {DOCUMENT_TYPES.map((type) => (
+                  <li key={type} className="rounded-full bg-line px-3 py-1 text-xs font-bold text-ink-soft">
+                    {type}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div data-reveal>
+              <DocumentFlowIllustration pagesRead={pagesRead} />
+            </div>
+          </div>
+
+          <div className="mt-16 grid gap-6 md:grid-cols-2">
+            <Card data-reveal className="p-7">
+              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-periwinkle-soft">
+                <Images className="h-6 w-6 text-ink" />
+              </div>
+              <h3 className="mb-2 text-xl font-semibold">Images</h3>
+              <p className="mb-4 leading-relaxed text-ink-soft">
+                Shoots, product photos, screenshots — tagged by what’s in them.
+              </p>
+              <ul className="space-y-2">
+                {IMAGE_SORT_EXAMPLES.map((example) => (
+                  <li
+                    key={example.before}
+                    className="flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-canvas px-3 py-2 text-sm"
+                  >
+                    <span className="min-w-0 truncate text-ink-soft line-through decoration-1">{example.before}</span>
+                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-soft" aria-hidden />
+                    <span className="min-w-0 truncate font-semibold">{example.after}</span>
+                    <span className="ml-auto shrink-0 rounded-full bg-lavender-soft px-2 py-0.5 text-xs font-bold">
+                      {example.destination}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+            <Card data-reveal className="p-7">
+              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-lavender-soft">
+                <FileText className="h-6 w-6 text-ink" />
+              </div>
+              <h3 className="mb-2 text-xl font-semibold">Documents</h3>
+              <p className="mb-4 leading-relaxed text-ink-soft">
+                Invoices, contracts, briefs and reports — named by what they say.
+              </p>
+              <ul className="space-y-2">
+                {DOCUMENT_SORT_EXAMPLES.map((example) => (
+                  <li
+                    key={example.before}
+                    className="flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-canvas px-3 py-2 text-sm"
+                  >
+                    <span className="min-w-0 truncate text-ink-soft line-through decoration-1">{example.before}</span>
+                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-soft" aria-hidden />
+                    <span className="min-w-0 truncate font-semibold">{example.after}</span>
+                    <span className="ml-auto shrink-0 rounded-full bg-periwinkle-soft px-2 py-0.5 text-xs font-bold">
+                      {example.destination}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          </div>
+
+          <div data-reveal className="mt-16">
+            <PageCapIllustration pagesRead={pagesRead} textChars={textChars} />
+          </div>
+        </section>
+
         {/* Zero-Retention */}
         <section id="privacy" className="mx-auto grid max-w-6xl scroll-mt-24 items-center gap-12 px-4 py-20 lg:grid-cols-2">
           <div>
@@ -346,10 +466,10 @@ export default function Landing() {
               Zero-Retention
             </p>
             <h2 data-reveal className="mb-5 text-4xl font-bold tracking-tight sm:text-5xl">
-              Your images pass through. They never stay.
+              Your images and documents pass through. They never stay.
             </h2>
             <p data-reveal className="mb-8 text-lg leading-relaxed text-ink-soft">
-              Client work is sensitive. DriveTag looks at each image just long enough to name and file it, then lets it go.
+              Client work is sensitive. DriveTag looks at each file just long enough to name and file it, then lets it go.
             </p>
             <ul className="space-y-4">
               {PRIVACY_POINTS.map((point) => (
@@ -405,37 +525,11 @@ export default function Landing() {
               Start free. Grow when you’re ready.
             </h2>
             <p data-reveal className="mx-auto mb-14 max-w-xl text-center text-lg text-ink-soft">
-              Your first {freeImages} images are free with no time limit. Paid plans add work processes and a fresh
-              allowance every month.
+              Your first {freeImages} images and {freeDocuments} documents are free with no time limit. Paid plans add
+              work processes and a fresh allowance every month.
             </p>
 
-            {plans ? (
-              <PlanGrid plans={plans.plans} currency={plans.currency} signedIn={Boolean(user)} compact />
-            ) : (
-              <div role="status" className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-                <span className="sr-only">Loading plans…</span>
-                {[0, 1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-[26rem]" />
-                ))}
-              </div>
-            )}
-
-            <div data-reveal className="mt-10 text-center">
-              <ButtonLink to="/plans" variant="secondary">
-                Compare plans
-                <ArrowRight className="h-4 w-4" aria-hidden />
-              </ButtonLink>
-              {plans && (
-                <p className="mt-4 text-sm font-bold text-ink-soft">
-                  Sorting documents too?{' '}
-                  <Link to="/plans#documents" className="text-ink-soft underline hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
-                    See document plans
-                  </Link>
-                </p>
-              )}
-            </div>
-
-            <TransparencyNote currency={plans?.currency ?? 'USD'} compact className="mt-10" />
+            <LandingPricingSection plans={plans} signedIn={Boolean(user)} />
           </section>
         )}
 
@@ -463,7 +557,8 @@ export default function Landing() {
               Stop organizing assets by hand.
             </h2>
             <p className="relative mx-auto mb-9 max-w-lg text-lg text-ink/80">
-              Connect your Drive once. Your first {freeImages} images are free — no credit card, no time limit.
+              Connect your Drive once. Your first {freeImages} images and {freeDocuments} documents are free — no credit
+              card, no time limit.
             </p>
             <div className="relative">
               <ButtonLink to={ctaHref} variant="secondary" size="lg" magnetic>

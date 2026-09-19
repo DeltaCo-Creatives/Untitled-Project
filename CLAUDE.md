@@ -4,34 +4,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DriveTag AI is a B2B micro-SaaS that automatically organizes visual assets for creative agencies and freelancers.
+DriveTag AI is a B2B micro-SaaS that automatically organizes the **images and documents** creative agencies and freelancers juggle.
 
-**Core mechanism:** the app listens for Google Drive webhooks fired when an image is dropped into a specific "Raw" folder, temporarily ingests the image into memory, sends it to the Gemini Flash API for visual classification, then renames and moves the file in Google Drive based on the AI's returned tags.
+**Core mechanism:** the app watches Google Drive "Raw" folders (webhooks, or polling until the domain is Google-verified). A new file is ingested into memory:
+- an image as bytes;
+- a document as its first 5 PDF pages, or up to 12,000 characters of text.
 
-**Security posture — "Zero-Retention":** user images must never be persisted to the database or any third-party storage bucket. Images are processed in memory only and discarded immediately after the Drive rename/move completes. Any code path that writes an incoming image to disk, a database, or a storage bucket violates this design and should be flagged. Note this is also why Gemini is called with inline image data rather than the Files API, which would retain the upload.
+It's then sent to the Gemini Flash API for classification, and the file is renamed and moved in Google Drive based on the AI's returned tags.
+
+**Security posture — "Zero-Retention":** user files, and text extracted from them, must never be persisted to the database, disk, logs or any storage bucket.
+- Files are processed in memory only and discarded immediately after the Drive rename/move completes.
+- Any code path that writes an incoming file or its text to disk, a database, a log or a storage bucket violates this design and should be flagged.
+- This is also why Gemini is called with inline data rather than the Files API, which would retain the upload.
 
 ## Current State
 
-Production-ready and live. Status, pricing and the document-sorting strategy are in [README.md](README.md). Setup, env vars, credentials, database helpers, deployment and operations are in [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md). Keep those three current when state or setup changes.
+Production-ready and live. Status, plans and the pricing strategy are in [README.md](README.md).
+- Setup, env vars, credentials, database helpers, deployment and operations are in [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md).
+- Everything only the owner can do (migrations, DNS, Google, hosting settings) is in [DeveloperToDo.md](DeveloperToDo.md).
 
-- **Backend:** Drive OAuth, the watch-channel lifecycle, the change-feed sweep, AI classification and rename/move are wired together. Users build **AI work processes**. Each process is a Raw folder feeding a Master folder, split into AI-chosen destination folders, with its own naming template, custom tag fields and instructions.
+Keep all four current when state or setup changes.
+
+- **Backend:** Drive OAuth, the watch-channel lifecycle, the change-feed sweep, AI classification and rename/move are wired together.
+  - Users build **AI work processes** of two kinds, `image` or `document`, chosen at creation and never changed.
+  - Each process is a Raw folder feeding a Master folder, split into AI-chosen destination folders, with its own naming template, custom tag fields and instructions.
   - Each process is sorted by up to `plan.aiPerProcess` AI workers at once.
-  - Also included: a polling fallback, "Organize now" for images already in Raw, and self-service account deletion (`DELETE /api/me`).
-- **Plans:** Free / Creator / Studio / Enterprise limit processes, AI workers per process and images. Usage is metered, and prices are USD placeholders. Everything is in `backend/src/config/plans.js`.
-  - Document sorting is priced there (`DOCUMENTS`, `available: false`) but **not built**.
+  - Also included: a polling fallback, "Organize now" for files already in Raw, and self-service account deletion (`DELETE /api/me`).
+- **Plans:** Free plus three families (Images, Documents, Images + Documents) × three tiers (Creator / Studio / Enterprise).
+  - Tiers set processes and AI workers per process; families set the monthly image and/or document allowances.
+  - Image and document packs top up either kind.
+  - Usage is metered per kind. Prices are USD placeholders. Everything is in `backend/src/config/plans.js`.
 - **Frontend:** React 19 + Vite + Tailwind. Real Supabase Google login, and every screen is backed by the API (`src/lib/api.ts`).
   - Public pages: Landing `/`, `/login`, `/plans`, and the legal pages `/privacy`, `/terms`, `/refunds`, `/cookies`, `/data-deletion`.
   - Protected pages: `/onboarding`, `/dashboard`, `/connect`, `/processes/new`, `/processes/:id`.
   - Pastel "Lavender garden" design system, GSAP animation, cookie consent banner, self-hosted fonts.
 - **Credentials:** `.env` files are gitignored and don't travel through git. The desktop working copy has real credentials; any other checkout, including cloud sessions, starts blank, and `npm run dev` names what's missing. There are no `.env.example` templates, deliberately; [backend/README.md](backend/README.md) lists every variable.
 - **Not built:**
-  - Checkout and the payment-provider webhook (Lemon Squeezy vs Paddle undecided). Until they exist, plans and credits are set by hand with the SQL helpers in backend/README.md.
-  - The document pipeline.
+  - Checkout and the payment-provider webhook (Lemon Squeezy vs Paddle undecided). Until they exist, plans and credits are set by hand (DeveloperToDo.md §9).
   - `helmet`/rate limiting.
-- **Schema:** production has `0001`, `0002` and `0003` all applied. Any new migration must be run by hand in the Supabase SQL editor *before* deploying code that depends on it; nothing applies migrations automatically.
-- **Production:** deployed from `production`. The frontend is on Vercel at `drivetag-ai.com` and the backend on DigitalOcean at `api.drivetag-ai.com`. Open items:
-  - The Namecheap DNS fix: the `@` record's HTTPS proxy toggle, and the `www` CNAME.
-  - Google domain verification. Until it's done, Drive webhooks can't be registered, and sorting runs on the polling fallback (`AUTO_SYNC_INTERVAL_SECONDS` > 0).
+  - Re-sorting already-sorted files.
+- **Schema:** production has `0001`–`0003` applied.
+  - `0004_documents.sql` (document processes, per-kind credits, plan families) must be run by the owner **before** the release that uses it is pushed.
+  - Any new migration must be run by hand in the Supabase SQL editor before deploying code that depends on it; nothing applies migrations automatically.
+- **Production:** deployed from `production`. The frontend is on Vercel at `drivetag-ai.com` and the backend on DigitalOcean at `api.drivetag-ai.com`. Open owner items:
+  - The Namecheap DNS fix.
+  - Google domain verification. Until it's done, Drive webhooks can't be registered and sorting runs on the polling fallback (`AUTO_SYNC_INTERVAL_SECONDS` > 0).
+  - The rest are in DeveloperToDo.md.
 
 ## Tech Stack & Hosting
 
@@ -73,7 +91,10 @@ backend/
 │   │   ├── drive.service.js        file bytes, rename/move, changes feed, folder browse/create
 │   │   ├── driveWatch.service.js   channel start/stop/renew
 │   │   ├── driveConnect.service.js parks the OAuth grant until the user who started Drive-connect claims it
-│   │   ├── gemini.service.js       per-process prompt + schema → {subject, style, genre, fields, destination}
+│   │   ├── gemini.service.js       per-process prompt + schema: images → {subject, style, genre, …}; documents →
+│   │   │                           {topic, type, organization, documentDate, …}; per-kind cost config
+│   │   ├── document.service.js     reads a document into memory: PDF first pages (pdf-lib), .docx text (mammoth),
+│   │   │                           text files, Google Docs/Sheets/Slides export; size, zip-bomb and editing-grace rules
 │   │   ├── entitlement.service.js  effective plan, remaining credits, which processes are locked
 │   │   ├── processes.service.js    process validation, folder checks, create-in-Master folders
 │   │   ├── pipeline.service.js     Loop B sweeps, Organize now, per-process AI worker pools, Raw folder status
@@ -86,7 +107,8 @@ backend/
     ├── test-gemini.js         standalone Gemini probe
     ├── renew-channels.js      cron entrypoint for channel renewal
     └── get-token.js           mint a Supabase access token for curl testing
-backend/test/                  node:test suites with mocked collaborators (pipeline workers, account deletion)
+backend/test/                  node:test suites (mocked collaborators; PGlite runs the real migrations for the SQL tests;
+                               the filename vectors run against both renderers)
 
 frontend/vercel.json           SPA rewrite (all paths → index.html)
 frontend/src/
@@ -98,17 +120,20 @@ frontend/src/
 │   ├── RouteAnalytics.tsx     consent-gated Vercel Analytics + URL redaction; mounts CookieConsent
 │   ├── CookieConsent.tsx      the cookie banner (two equal choices, reopened from the footer)
 │   ├── SiteFooter.tsx         legal links, "Cookie settings", support email
-│   ├── TagFlowIllustration.tsx, MemoryDemo.tsx   animated marketing illustrations
+│   ├── TagFlowIllustration.tsx, DocumentFlowIllustration.tsx, PageCapIllustration.tsx, MemoryDemo.tsx
+│   │                          animated marketing illustrations (images, documents, the page cap, Zero-Retention)
 │   ├── ui/                    Button, Card, Modal, ConfirmDialog, TextField/TextArea, Switch,
 │   │                          ProgressBar, Logo, Skeleton, AnimatedNumber, BlobBackground
 │   ├── drive/                 FolderBrowser (breadcrumbs, search, new folder), FolderPickerField
-│   ├── processes/             ProcessForm + destination, naming, tag field and instruction editors
-│   ├── billing/               PlanGrid/PlanCard, TopupPacks, DocumentPricing (preview), TransparencyNote, UsageMeter
+│   ├── processes/             ProcessForm, ProcessKindPicker/Badge + destination, naming, tag field and instruction editors
+│   ├── billing/               FamilyPicker, PlanGrid/PlanCard, TopupPacks, DocumentsExplainer, LandingPricingSection,
+│   │                          TransparencyNote, UsageMeter (both kinds), planFeatures helpers
 │   └── dashboard/             useDashboardData polling + the dashboard's cards (incl. AccountCard: delete account)
 ├── hooks/                     usePressMotion, useReveal, usePlans
 ├── lib/
 │   ├── supabase.ts            anon-key client
-│   ├── api.ts                 typed backend client (Bearer token, readable network/CORS errors, field-level error details)
+│   ├── api.ts                 typed backend client (Bearer token, readable network/CORS errors, field-level error details,
+│   │                          normalizers for an older backend mid-deploy)
 │   ├── filename.ts            naming-template mirror of backend/src/utils/filename.js for the live preview
 │   ├── consent.ts             analytics consent storage + the events the banner and footer use
 │   ├── format.ts, messages.ts
@@ -117,7 +142,7 @@ frontend/src/
 └── pages/                     Landing, Login, Plans, Onboarding, Connect, Dashboard, ProcessEditor;
                                legal/ Privacy, Terms, Refunds, Cookies, DataDeletion (+ LegalPage layout)
 
-supabase/migrations/           0001_init.sql, 0002_work_processes.sql, 0003_cleanup.sql (source of truth), at the repo root
+supabase/migrations/           0001_init.sql, 0002_work_processes.sql, 0003_cleanup.sql, 0004_documents.sql (source of truth)
 tests/filename-vectors.json    shared naming-template vectors both filename implementations must pass
 ```
 
@@ -159,8 +184,39 @@ These were deliberate and are easy to "fix" wrongly:
   - `processValidation.folderConflicts` rejects such layouts on save.
   - `pipeline.resolveDestination` falls back to Unsorted at runtime, and fails the file if Unsorted is itself a Raw folder.
   - The ledger stays unique on `(user_id, file_id)`, so a file is sorted automatically at most once.
-- **Credits are charged on success only, atomically.**
-  - The SQL function `complete_processed_file` does three things in one transaction: re-checks the `claimed_at` fence, charges one credit (free → monthly → top-up → `overage`), and marks the file completed.
+- **Two process kinds, one pipeline.** `work_processes.kind` is `image` or `document`, set at creation and immutable.
+  - Immutability is enforced three times: validation 400 on `kind`, the service, and `save_work_process` raising `process_kind_immutable`.
+  - A process only claims files whose MIME type is in `MIME_TYPES_BY_KIND[kind]` (`utils/filename.js`); anything else in its Raw folder is ignored, never claimed.
+  - Naming tokens are per kind (`TEMPLATE_TOKENS_BY_KIND`: documents use `{type} {topic} {organization} {docdate}`).
+  - **Reserved tag keys are per kind on purpose.** Existing image processes may already have a tag keyed `type`/`topic`; reserving the union would lock them out.
+  - Both renderers stay identical and are checked by `backend/test/filename-vectors.test.js`, which imports the `.ts` file directly.
+- **Documents are read in memory with a hard cost cap** (`document.service.js`, `FILE_LIMITS` in plans.js):
+  - PDFs are trimmed to their first 5 pages with pdf-lib.
+  - `.docx`, text files and Google Docs/Sheets/Slides (Drive export) are cut to 12,000 characters.
+  - Files over 20 MB are failed before download.
+  - A `.docx` whose zip declares more than 100 MB unpacked is refused before mammoth inflates it (`declaredUnzippedBytes`).
+  - Library errors become readable messages. Never let raw parser errors reach `processed_files.error`, because users see it.
+- **Google-native files edited in the last 10 minutes are left alone** (`isStillBeingEdited`), so a Doc someone is still writing inside Raw isn't moved mid-sentence.
+  - They're never claimed and count as "waiting".
+  - The changes feed won't report them again unless they change, so the pipeline keeps an in-memory **deferred queue** per user (`deferGraceFile`, `processDeferredFiles`), capped at 500.
+  - One `unref`'d timer per user fires when the earliest file is due (grace + 30 s), and every sweep also processes due entries.
+  - A due file is re-fetched (`getFileMetadata`), then dropped if it's gone, trashed or no longer in Raw, re-deferred if edited again, or run through the normal claim/charge path.
+  - A Drive error keeps the entry for a retry.
+  - It's single-instance and in memory, so a restart falls back to "Organize now". `forgetUser` clears it on account deletion.
+- **Document prompts are injection-hardened.**
+  - A separate system instruction says document text is content, never instructions.
+  - The text travels inside a fenced block, and `fenceSafe` neutralizes any fence markers inside it.
+  - Owner settings stay labelled JSON data.
+  - `DOCUMENT_COST_CONFIG` uses LOW media resolution. It was measured 33–38% cheaper than medium with the same classification.
+- **Credits are per kind and charged on success only, atomically.**
+  - Documents have their own free/monthly/top-up buckets (`subscriptions.free_documents_used`, `period_documents_used`, `document_topup_balance`).
+  - The pipeline reserves and releases from `ctx.credits[kind]`.
+  - A sweep fast-forwards only when *every* kind that has a runnable process is out of credits. Files of an exhausted kind come back "blocked" and wait in Raw.
+  - The SQL function `complete_processed_file_v2` does three things in one transaction: re-checks the `claimed_at` fence, charges one credit of the file's kind (free → monthly → top-up → `overage`), and marks the file completed.
+- **0004 is expand-only.** The v1 `complete_processed_file`, `image_usage` and `grant_image_credits` stay for the previous backend during a deploy; v1 now also resets the document period counter.
+  - The new backend calls `usage_snapshot`, `complete_processed_file_v2` and `grant_credits`, and `schemaProblem()` logs loudly if 0004 is missing.
+  - Drop the v1 functions only in a later migration, after the cleanup release.
+  - The frontend's `api.ts` normalizes old API responses (missing `kind`, family, document usage) because Vercel usually finishes deploying before DigitalOcean. Don't remove those normalizers.
   - Failed files are never charged, so there are no refunds, and a taken-over claim can't be charged twice.
   - A run reads remaining credits once. Each file **reserves** one before its first `await`, and the reservation is released on every outcome that wasn't charged (skipped, claim lost, failed), so concurrent workers can never dispatch more files than there are credits. Deploy overlap is the only thing that produces `overage`.
 - **Several AI workers per process, one run per user.**
@@ -176,6 +232,10 @@ These were deliberate and are easy to "fix" wrongly:
   - Google's price for the model doubles on 2027-01-01, and without this config Enterprise would run at a loss.
   - Transient 429/500/503 errors are retried by the SDK (`httpOptions.retryOptions`).
   - Errors stored for users are vendor-neutral.
+- **Plan families share tiers.** A tier (Creator/Studio/Enterprise) fixes `maxProcesses` and `aiPerProcess`; the family fixes the monthly allowances.
+  - Any plan can run both process kinds and buy either pack kind.
+  - The image-family ids (`creator`, `studio`, `enterprise`) predate families and are stored in `subscriptions.plan`, so never rename them.
+  - Adding a plan id also needs `subscriptions_plan_check` updated in a migration. `backend/test/sql-migrations.test.js` loops over `PLAN_ORDER` so they can't drift.
 - **Plan limits live only in `backend/src/config/plans.js`.** They're passed into the SQL functions as arguments; don't hard-code them in SQL or the frontend. The frontend reads them from `GET /api/plans`.
 - **Out of credits, or no active processes → the page token is fast-forwarded** (`getStartPageToken`) instead of listing changes. Images that arrived meanwhile wait in Raw for "Organize now". Holding the token instead would make every later Drive change re-read an ever-growing backlog.
 - **A notification that arrives mid-sweep isn't dropped.** It sets `rerunRequested`, and one more sweep runs with the channel re-read once the user's slot frees up.
@@ -219,15 +279,24 @@ All commands run from `backend/`:
 npm install                    # install dependencies
 npm run dev                    # start with nodemon (auto-reload)
 npm start                      # start without auto-reload
-npm test                       # node:test suites in test/ (mocked; no .env, network or AI calls needed)
-npm run test:gemini [path] [--process spec.json]   # classify a local image with a process's destinations/tags, print the result + filename
+npm test                       # node:test suites in test/ (mocked + PGlite SQL; no .env, network or AI calls; Node 22.3+)
+npm run test:gemini [path] [--process spec.json]   # classify a local image or document (.pdf .docx .txt .md .csv), print tags + filename
 npm run renew:channels         # renew expiring Drive watch channels now (production also does this hourly in-process)
 npm run token -- <email> <pw>  # mint a Supabase access token for curling the authed routes
 ```
 
 From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && vite build`), `npm run lint` (oxlint), `npm run preview` (serve the production build). `.claude/launch.json` defines the dev server and production preview as preview-server configs.
 
-`npm run test:gemini` and `npm run token` need only their own vars; the server needs the full `backend/.env` and refuses to boot, naming the missing variables, when it's incomplete. The variable list lives in [backend/README.md](backend/README.md). `npm test` covers the worker manager (concurrency caps, de-duplication, credit reservation, fast-forward) and account deletion. Everything else is verified with manual probes, curl and browser checks. Name new test files `*.test.js` under `backend/test/`; the script is scoped there so it never picks up `scripts/test-gemini.js`, which makes a real, billed AI call.
+`npm run test:gemini` and `npm run token` need only their own vars; the server needs the full `backend/.env` and refuses to boot, naming the missing variables, when it's incomplete. The variable list lives in [backend/README.md](backend/README.md). `npm test` covers:
+- the worker manager (concurrency caps, de-duplication, per-kind credit reservation, fast-forward);
+- document reading (PDF trimming, docx, text, exports, zip-bomb guard);
+- document prompts;
+- process validation;
+- both filename renderers;
+- entitlement;
+- the organize route;
+- account deletion;
+- the real SQL migrations in PGlite (charging, rollover, grants, plan ids, kind immutability). Everything else is verified with manual probes, curl and browser checks. Name new test files `*.test.js` under `backend/test/`; the script is scoped there so it never picks up `scripts/test-gemini.js`, which makes a real, billed AI call.
 
 ## API surface
 
@@ -243,10 +312,10 @@ From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && v
 | GET/POST | `/api/drive/folders` (`?q`, `?parentId`, `?pageToken`; POST creates a folder) | Bearer |
 | GET | `/api/drive/folders/:id/path` | Bearer |
 | GET/POST/DELETE | `/api/drive/watch` | Bearer |
-| GET/POST | `/api/processes` | Bearer |
+| GET/POST | `/api/processes` (POST body requires `kind`: `image` \| `document`) | Bearer |
 | GET | `/api/processes/status` | Bearer |
 | GET/PUT/PATCH/DELETE | `/api/processes/:id` | Bearer |
-| POST | `/api/processes/:id/organize` | Bearer |
+| POST | `/api/processes/:id/organize` (402 `out_of_images` / `out_of_documents`) | Bearer |
 | GET | `/api/me` | Bearer |
 | DELETE | `/api/me` (body `{ "confirm": "DELETE" }`) — delete account | Bearer |
 | GET | `/api/activity` (`?processId`) | Bearer |

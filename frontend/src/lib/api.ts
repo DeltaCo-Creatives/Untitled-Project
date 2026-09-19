@@ -1,4 +1,7 @@
 import { supabase } from './supabase';
+import type { ProcessKind } from './filename';
+
+export type { ProcessKind };
 
 // The localhost fallback is for `npm run dev` only; production builds must be given VITE_API_URL.
 const API_URL = (import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '')).replace(
@@ -32,7 +35,20 @@ export type WatchMode = 'live' | 'polling';
 
 // ---------------------------------------------------------------- plans
 
-export type PlanId = 'free' | 'creator' | 'studio' | 'enterprise';
+export type PlanId =
+  | 'free'
+  | 'creator'
+  | 'studio'
+  | 'enterprise'
+  | 'docs-creator'
+  | 'docs-studio'
+  | 'docs-enterprise'
+  | 'complete-creator'
+  | 'complete-studio'
+  | 'complete-enterprise';
+/** Which monthly allowances a plan includes. Free has a small lifetime allowance of both. */
+export type PlanFamilyId = 'free' | 'images' | 'documents' | 'complete';
+export type PlanTier = 'free' | 'creator' | 'studio' | 'enterprise';
 export type BillingInterval = 'monthly' | 'yearly';
 
 /** USD amounts. yearly is null where the plan is monthly-only (or free). */
@@ -43,19 +59,31 @@ export interface Price {
 
 export interface PlanInfo {
   id: PlanId;
+  family: PlanFamilyId;
+  /** The scale shared across families: Creator, Studio or Enterprise (or Free). */
+  tier: PlanTier;
+  /** The tier's name ("Creator"); pair it with the family's label when the family matters. */
   label: string;
   tagline: string;
   maxProcesses: number;
   /** AI workers that can sort one process's Raw folder at the same time. */
   aiPerProcess: number;
-  /** Lifetime images (Free only). */
+  /** Lifetime allowances (Free only). */
   freeImages: number;
-  /** Images per billing period (paid plans). */
+  freeDocuments: number;
+  /** Allowances per billing period (paid plans). */
   monthlyImages: number;
+  monthlyDocuments: number;
   billing: BillingInterval[];
   price: Price;
-  /** The plan the pricing page highlights. */
+  /** The plan the pricing page highlights within its family. */
   popular: boolean;
+}
+
+export interface PlanFamily {
+  id: Exclude<PlanFamilyId, 'free'>;
+  label: string;
+  description: string;
 }
 
 export interface TopupPack {
@@ -64,28 +92,21 @@ export interface TopupPack {
   price: number;
 }
 
-/** Document sorting is priced but not built yet: while available is false every document price is a preview. */
-export interface DocumentPricing {
-  available: boolean;
-  /** The AI reads at most this many pages of a document (the cost cap). */
+export interface DocumentPack {
+  id: string;
+  documents: number;
+  price: number;
+}
+
+/** What the AI reads from each document, and the size limits, as shown on the pricing page. */
+export interface FileLimits {
+  documentMaxMb: number;
+  /** The AI reads at most this many PDF pages per document — the cost cap. */
   pagesRead: number;
-  maxFileMb: number;
-  /** Lifetime documents on the Free plan. */
-  freeDocuments: number;
-  /** Add-on for an image plan, keyed by plan id; uses that plan's processes and AI workers. */
-  addons: Partial<Record<PlanId, { monthlyDocuments: number; price: Price }>>;
-  /** Document-only plans. */
-  plans: {
-    id: string;
-    label: string;
-    tagline: string;
-    maxProcesses: number;
-    aiPerProcess: number;
-    monthlyDocuments: number;
-    billing: BillingInterval[];
-    price: Price;
-  }[];
-  packs: { id: string; documents: number; price: number }[];
+  /** ...or this many characters of text from Word, Google Docs and text files. */
+  textChars: number;
+  /** Google Docs, Sheets and Slides edited this recently are left alone (someone may still be writing). */
+  editingGraceMinutes: number;
 }
 
 export interface ProcessLimits {
@@ -101,23 +122,43 @@ export interface ProcessLimits {
 
 export interface PlansResponse {
   currency: string;
+  families: PlanFamily[];
   plans: PlanInfo[];
   topupPacks: TopupPack[];
-  documents: DocumentPricing;
+  documentPacks: DocumentPack[];
+  fileLimits: FileLimits;
   processLimits: ProcessLimits;
 }
 
 export interface CurrentPlan {
   id: PlanId;
+  family: PlanFamilyId;
   label: string;
   maxProcesses: number;
   aiPerProcess: number;
   freeImages: number;
+  freeDocuments: number;
   monthlyImages: number;
+  monthlyDocuments: number;
+}
+
+/** One kind's allowance: lifetime free, this billing period, and non-expiring packs. */
+export interface KindUsage {
+  freeUsed: number;
+  freeLimit: number;
+  periodUsed: number;
+  periodLimit: number;
+  topupBalance: number;
+  /** Files of this kind DriveTag can still sort: free + this period + packs. */
+  remaining: number;
+  exhausted: boolean;
 }
 
 export interface Usage {
   status: string;
+  /** Per kind. The flat fields below repeat `images`, for clients that predate documents. */
+  images: KindUsage;
+  documents: KindUsage;
   freeUsed: number;
   freeLimit: number;
   periodUsed: number;
@@ -165,6 +206,8 @@ export interface Destination {
 
 export interface WorkProcess {
   id: string;
+  /** What the process sorts. Chosen when it's created and can't be changed afterwards. */
+  kind: ProcessKind;
   name: string;
   rawFolderId: string;
   rawFolderName: string | null;
@@ -200,6 +243,8 @@ export interface DestinationInput {
 }
 
 export interface ProcessInput {
+  /** Required when creating; must match the existing kind when updating. */
+  kind: ProcessKind;
   name: string;
   rawFolderId: string;
   masterFolderId: string;
@@ -240,7 +285,7 @@ export interface OrganizeResponse {
   started: boolean;
   reason?: string;
   waiting?: number;
-  /** How many of the waiting images the user's remaining balance covers. */
+  /** How many of the waiting files the user's remaining balance of that kind covers. */
   willProcess?: number;
 }
 
@@ -252,15 +297,23 @@ export interface ActivityTagField {
   value: string;
 }
 
+/** What the AI returned. Image processes fill genre/subject/style; document processes fill type/topic/organization. */
 export interface ActivityTags {
   genre?: string;
   subject?: string;
   style?: string;
+  type?: string;
+  topic?: string;
+  organization?: string;
+  /** YYYY-MM-DD, or empty when the document shows no date. */
+  document_date?: string;
   fields?: ActivityTagField[];
 }
 
 export interface ActivityEntry {
   file_id: string;
+  /** Rows written before document processes existed have no kind; treat them as images. */
+  kind?: ProcessKind;
   original_name: string | null;
   new_name: string | null;
   tags: ActivityTags | null;
@@ -345,12 +398,74 @@ function query(params: Record<string, string | number | undefined | null>) {
   return text ? `?${text}` : '';
 }
 
+// A backend that predates document processes omits these fields; the gap only lasts while a deploy rolls out.
+function withKind(process: WorkProcess): WorkProcess {
+  return { ...process, kind: process.kind ?? 'image' };
+}
+
+const NO_USAGE: KindUsage = {
+  freeUsed: 0,
+  freeLimit: 0,
+  periodUsed: 0,
+  periodLimit: 0,
+  topupBalance: 0,
+  remaining: 0,
+  exhausted: true,
+};
+
+function withKindUsage(me: MeResponse): MeResponse {
+  const usage = me.usage;
+  const plan = me.plan;
+  return {
+    ...me,
+    plan: plan
+      ? {
+          ...plan,
+          family: plan.family ?? (plan.id === 'free' ? 'free' : 'images'),
+          freeDocuments: plan.freeDocuments ?? 0,
+          monthlyDocuments: plan.monthlyDocuments ?? 0,
+        }
+      : null,
+    usage: usage
+      ? {
+          ...usage,
+          images: usage.images ?? {
+            freeUsed: usage.freeUsed,
+            freeLimit: usage.freeLimit,
+            periodUsed: usage.periodUsed,
+            periodLimit: usage.periodLimit,
+            topupBalance: usage.topupBalance,
+            remaining: usage.remaining,
+            exhausted: usage.exhausted,
+          },
+          documents: usage.documents ?? NO_USAGE,
+        }
+      : null,
+  };
+}
+
+function withPlanFamilies(body: PlansResponse): PlansResponse {
+  return {
+    ...body,
+    families: body.families ?? [],
+    plans: body.plans.map((plan) => ({
+      ...plan,
+      family: plan.family ?? (plan.id === 'free' ? 'free' : 'images'),
+      tier: plan.tier ?? (plan.id as PlanTier),
+      freeDocuments: plan.freeDocuments ?? 0,
+      monthlyDocuments: plan.monthlyDocuments ?? 0,
+    })),
+    documentPacks: body.documentPacks ?? [],
+    fileLimits: body.fileLimits ?? { documentMaxMb: 20, pagesRead: 5, textChars: 12000, editingGraceMinutes: 10 },
+  };
+}
+
 export const api = {
-  me: () => request<MeResponse>('/api/me'),
+  me: () => request<MeResponse>('/api/me').then(withKindUsage),
   activity: ({ limit, processId }: { limit?: number; processId?: string } = {}) =>
     request<{ activity: ActivityEntry[] }>(`/api/activity${query({ limit, processId })}`),
 
-  plans: () => request<PlansResponse>('/api/plans'),
+  plans: () => request<PlansResponse>('/api/plans').then(withPlanFamilies),
 
   startGoogleAuth: () => request<{ authUrl: string }>('/api/auth/google/start', { method: 'POST' }),
   /**
@@ -380,8 +495,13 @@ export const api = {
   stopWatch: () => request<{ watching: boolean; stopped: boolean }>('/api/drive/watch', { method: 'DELETE' }),
 
   processes: {
-    list: () => request<ProcessesResponse>('/api/processes'),
-    get: (id: string) => request<{ process: WorkProcess }>(`/api/processes/${id}`),
+    list: () =>
+      request<ProcessesResponse>('/api/processes').then((body) => ({
+        ...body,
+        processes: body.processes.map(withKind),
+      })),
+    get: (id: string) =>
+      request<{ process: WorkProcess }>(`/api/processes/${id}`).then((body) => ({ process: withKind(body.process) })),
     create: (input: ProcessInput) =>
       request<{ process: WorkProcess }>('/api/processes', { method: 'POST', body: JSON.stringify(input) }),
     update: (id: string, input: ProcessInput) =>

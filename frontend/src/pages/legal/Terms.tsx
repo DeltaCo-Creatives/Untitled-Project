@@ -35,10 +35,11 @@ export default function Terms() {
 
       <LegalSection id="the-service" heading="The service">
         <p>
-          DriveTag watches a Google Drive "Raw" folder you choose, classifies each new image with AI, and renames
-          and moves it into a destination folder based on the AI's tags. You configure this as one or more "AI work
+          DriveTag watches Google Drive "Raw" folders you choose, classifies each new file with AI, and renames and
+          moves it into a destination folder based on the AI's tags. You configure this as one or more "AI work
           processes," each with its own Raw and Master folders, destination folders, naming template, custom tag
-          fields, and instructions.
+          fields, and instructions. A process is fixed, when you create it, to sort either images or documents — PDFs,
+          Word (.docx) files, Google Docs, Sheets and Slides, and text, Markdown or CSV files — never both.
         </p>
       </LegalSection>
 
@@ -71,6 +72,7 @@ export default function Terms() {
       <LegalSection id="ai-output" heading="AI output">
         <ul className="list-disc space-y-2 pl-5">
           <li>Classification, tagging and destination choices are automated and can be wrong or incomplete.</li>
+          <li>For a long document, the AI reads only the beginning — the first 5 pages of a PDF, or roughly the first 12,000 characters of a Word, text, or Google Docs/Sheets/Slides file — so classification is based on that part, not the whole document.</li>
           <li>DriveTag renames and moves files — it never deletes them.</li>
           <li>Review results that matter before relying on them.</li>
           <li>Google Drive's own version history and folder structure remain yours to use if you need to undo something.</li>
@@ -90,10 +92,10 @@ export default function Terms() {
 
       <LegalSection id="plans-billing" heading="Plans, allowances & billing">
         <ul className="list-disc space-y-2 pl-5">
-          <li>Each plan's process limits, AI-worker limits, and image allowances are shown on our{' '}
-            <Link to="/plans" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">pricing page</Link>.
+          <li>Each plan's process limits, AI-worker limits, and image and document allowances are shown on our{' '}
+            <Link to="/plans" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">pricing page</Link>, across our Images, Documents, and Images + Documents plan families. Any plan can run either kind of work process.
           </li>
-          <li>When an allowance runs out, sorting pauses until it resets or you add a pack — we never charge overage fees.</li>
+          <li>When an allowance runs out, sorting pauses until it resets or you add an image or document pack — we never charge overage fees.</li>
           <li>Prices are listed in USD; taxes are calculated at checkout.</li>
           <li>Paid subscriptions renew automatically until cancelled.</li>
           <li>We'll announce price changes at least 30 days before they take effect.</li>
@@ -103,7 +105,7 @@ export default function Terms() {
       </LegalSection>
 
       <LegalSection id="free-plan" heading="Free plan">
-        <p>The Free plan's allowance and limits may change with notice, as described on our pricing page.</p>
+        <p>The Free plan's image and document allowances and limits may change with notice, as described on our pricing page.</p>
       </LegalSection>
 
       <LegalSection id="suspension-termination" heading="Suspension & termination">

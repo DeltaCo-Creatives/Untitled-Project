@@ -53,7 +53,7 @@ function folderProblem(folder, field, { needsAddChildren = false, needsRemoveChi
   if (needsAddChildren && folder.capabilities?.canAddChildren === false) {
     return { field, message: "DriveTag can't add files to that folder. Pick one you can edit." };
   }
-  // A view-only Raw folder would send every image to Gemini and then fail the move.
+  // A view-only Raw folder would send every file to the AI and then fail the move.
   if (needsRemoveChildren && folder.capabilities?.canRemoveChildren === false) {
     return { field, message: "DriveTag can't move files out of that folder. Ask for Editor access, or pick one you can edit." };
   }
@@ -77,7 +77,7 @@ function invalid(details) {
 /**
  * Creates (processId null) or updates a work process. Validates the input,
  * checks every folder in Drive, creates "create in Master" destinations, and
- * rejects folder layouts that would loop images between processes.
+ * rejects folder layouts that would loop files between processes.
  */
 export async function saveForUser(userId, processId, body) {
   const [processes, entitlement] = await Promise.all([repo.listProcesses(userId), entitlementFor(userId)]);
@@ -90,7 +90,8 @@ export async function saveForUser(userId, processId, body) {
     throw new HttpError(402, planLimitMessage(plan), { code: "process_limit_reached" });
   }
 
-  const { errors, value } = validateProcessInput(body);
+  // current is null on create, so current?.kind is undefined — validateProcessInput reads that as "create".
+  const { errors, value } = validateProcessInput(body, { existingKind: current?.kind });
   if (errors.length > 0) throw invalid(errors);
 
   // An id this process doesn't have (deleted in another tab, or not ours) just becomes a new destination.
@@ -164,6 +165,7 @@ export async function saveForUser(userId, processId, body) {
   const enabled = current?.locked ? current.enabled : value.enabled ?? current?.enabled ?? true;
 
   const processRow = {
+    kind: value.kind,
     name: value.name,
     raw_folder_id: value.rawFolderId,
     raw_folder_name: folders.get(value.rawFolderId).name,
@@ -180,6 +182,14 @@ export async function saveForUser(userId, processId, body) {
   try {
     savedId = await repo.saveProcess(userId, processId, processRow, destinationRows, plan.maxProcesses);
   } catch (err) {
+    // save_work_process's own immutability check, hit only if two requests race between our
+    // existingKind check above and this write. workProcess.repo.js's RAISED_CODES doesn't list
+    // this code, so err.code won't be set for it — match on the message it wraps instead.
+    if (err.code === "process_kind_immutable" || /process_kind_immutable/.test(err.message ?? "")) {
+      throw invalid([
+        { field: "kind", message: "A process can't switch between images and documents. Create a new process instead." },
+      ]);
+    }
     switch (err.code) {
       case "process_limit_reached":
         throw new HttpError(402, planLimitMessage(plan), { code: err.code });
