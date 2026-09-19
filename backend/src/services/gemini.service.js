@@ -1,11 +1,27 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { ApiError, GoogleGenAI, MediaResolution, ThinkingLevel, Type } from "@google/genai";
 import { env } from "../config/env.js";
 import { slugify } from "../utils/filename.js";
+import { logger } from "../utils/logger.js";
 
 // Without a timeout a hung call would hold the user's sweep lock (pipeline inFlight) indefinitely.
 const ai = new GoogleGenAI({ apiKey: env.gemini.apiKey, httpOptions: { timeout: 90_000 } });
 
 const FALLBACK_KEY = "unsorted";
+
+// Rate limits (429) and momentary server trouble (500/503) are transient, and more likely
+// once several workers call Gemini at once. Retried by the SDK's own httpOptions.retryOptions
+// (attempts counts the initial try), which backs off ~1.5s then ~4s with jitter, rather than
+// hand-rolling the same thing.
+const RETRYABLE_STATUS_CODES = [429, 500, 503];
+const RETRY_OPTIONS = { attempts: 3, initialDelay: 1.5, maxDelay: 4, httpStatusCodes: RETRYABLE_STATUS_CODES };
+
+// Measured on gemini-3.6-flash (2026-09-19, 6 sample images): the defaults (high resolution, default thinking)
+// cost ~1,460 input + ~420 thinking/output tokens per image; medium resolution with low thinking costs ~900 + ~50,
+// answers 2x faster, and picked the same destination and genre on all six. Thinking tokens bill at the output rate.
+const COST_CONFIG = {
+  mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+  thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+};
 const MAX_VALUE_LENGTH = 100;
 
 // Fixed rules only. The owner's settings travel separately as labelled JSON data
@@ -106,7 +122,7 @@ function cleanValue(value) {
 export function parseClassification(text, request) {
   const parsed = JSON.parse(text);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Gemini returned an unexpected response shape");
+    throw new Error("The AI returned an unexpected response shape");
   }
 
   const key = typeof parsed.destination === "string" ? parsed.destination.trim() : "";
@@ -137,21 +153,35 @@ export async function classifyImage(buffer, mimeType, process) {
   }
 
   const request = buildClassificationRequest(process);
-  const response = await ai.models.generateContent({
-    model: env.gemini.model,
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: request.settingsText }, { inlineData: { mimeType, data: buffer.toString("base64") } }],
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: env.gemini.model,
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: request.settingsText }, { inlineData: { mimeType, data: buffer.toString("base64") } }],
+        },
+      ],
+      config: {
+        systemInstruction: request.systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: request.responseSchema,
+        ...COST_CONFIG,
+        // Merges onto the client's httpOptions above, so the 90s per-attempt timeout still applies.
+        httpOptions: { retryOptions: RETRY_OPTIONS },
       },
-    ],
-    config: {
-      systemInstruction: request.systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema: request.responseSchema,
-    },
-  });
+    });
+  } catch (err) {
+    if (err instanceof ApiError && RETRYABLE_STATUS_CODES.includes(err.status)) {
+      throw new Error("The AI service is busy right now. Use Retry in a few minutes.");
+    }
+    // Vendor-neutral for the activity ledger and the UI; the original (which can name the
+    // model) goes only to the redacting logger, so debugging isn't lost.
+    logger.error("Gemini classification request failed", { reason: err.message, status: err instanceof ApiError ? err.status : undefined });
+    throw new Error("The AI couldn't classify this image right now. Use Retry to try again.");
+  }
 
-  if (!response.text) throw new Error("Gemini returned no classification (the response may have been blocked)");
+  if (!response.text) throw new Error("The AI returned no classification (the response may have been blocked)");
   return parseClassification(response.text, request);
 }

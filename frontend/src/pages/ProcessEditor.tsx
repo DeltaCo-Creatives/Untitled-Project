@@ -25,6 +25,7 @@ import { browserTimeZone, plural, timeAgo } from '../lib/format';
 import { gsap, useGSAP, Flip, ScrollTrigger, SplitText, MOTION_OK, prefersReducedMotion } from '../lib/gsap';
 import { errorMessage, friendlyWatchError } from '../lib/messages';
 import { usePlans } from '../hooks/usePlans';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { Button, ButtonLink } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -92,6 +93,7 @@ export default function ProcessEditor() {
 function ProcessEditorPage({ processId }: { processId: string | null }) {
   const navigate = useNavigate();
   const { plans, loading: plansLoading } = usePlans();
+  useDocumentTitle(processId ? 'Edit work process' : 'New work process');
 
   const pageRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
@@ -414,7 +416,7 @@ function ProcessEditorPage({ processId }: { processId: string | null }) {
 
   const status = saving
     ? {
-        icon: <LoaderCircle className="h-4 w-4 shrink-0 animate-spin" />,
+        icon: <LoaderCircle className="h-4 w-4 shrink-0 animate-spin motion-reduce:animate-none" />,
         text: processId ? 'Saving your changes…' : 'Creating your process…',
         tone: 'text-ink',
       }
@@ -453,7 +455,7 @@ function ProcessEditorPage({ processId }: { processId: string | null }) {
         </div>
       </header>
 
-      <main className={`mx-auto max-w-6xl px-4 pt-8 sm:pt-12 ${view === 'form' ? 'pb-44 sm:pb-36' : 'pb-16'}`}>
+      <main id="main-content" className={`mx-auto max-w-6xl px-4 pt-8 sm:pt-12 ${view === 'form' ? 'pb-44 sm:pb-36' : 'pb-16'}`}>
         {view === 'loading' ? (
           <div className="space-y-6" role="status" aria-label="Loading work process">
             <Skeleton className="h-12 w-72 max-w-full" />
@@ -681,7 +683,7 @@ function ProcessEditorPage({ processId }: { processId: string | null }) {
                 Cancel
               </Button>
               <Button onClick={handleSave} disabled={saving} className="flex-1 sm:flex-none">
-                {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {saving ? <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Save className="h-4 w-4" />}
                 {saving ? 'Saving…' : processId ? 'Save changes' : 'Create process'}
               </Button>
             </div>

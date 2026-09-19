@@ -116,11 +116,92 @@ function readableMoveError(err, destination) {
   return err;
 }
 
+/**
+ * Bounds how many downloads+classifications run at once across every user's run,
+ * since each holds an image buffer (up to gemini.maxImageBytes) in memory and Gemini
+ * has per-project rate limits. A small in-module FIFO queue: acquire() resolves
+ * immediately while permits remain, otherwise waits for a release().
+ *
+ * ponytail: FIFO isn't fair across users — one huge "Organize now" can sit ahead of
+ * everyone else's jobs in the queue. Per-user fairness is the upgrade path if that
+ * becomes a real problem.
+ */
+function createSemaphore(max) {
+  let free = max;
+  const waiters = [];
+  return {
+    async acquire() {
+      if (free > 0) {
+        free -= 1;
+        return;
+      }
+      await new Promise((resolve) => waiters.push(resolve));
+    },
+    release() {
+      const next = waiters.shift();
+      if (next) next();
+      else free += 1;
+    },
+  };
+}
+const aiJobSlots = createSemaphore(env.pipeline.maxConcurrentAiJobs);
+
+/** Downloads and classifies one file. The buffer only exists between acquiring and releasing a global slot (Zero-Retention). */
+async function classifyFile(userId, file, process) {
+  await aiJobSlots.acquire();
+  try {
+    const buffer = await getFileBuffer(userId, file.id);
+    return await classifyImage(buffer, file.mimeType, process);
+  } finally {
+    aiJobSlots.release();
+  }
+}
+
+// Live AI worker counts per process, for the dashboard (getProcessesStatus). Module-level
+// because a process's queue can be driven by either a webhook sweep or "Organize now".
+const workerCounts = new Map(); // processId → workers currently busy on it
+
+function bumpWorkers(processId, delta) {
+  const next = (workerCounts.get(processId) ?? 0) + delta;
+  if (next > 0) workerCounts.set(processId, next);
+  else workerCounts.delete(processId);
+}
+
+/** Last write wins: a file appearing twice in one batch is dispatched once. */
+function dedupeById(files) {
+  return [...new Map(files.map((file) => [file.id, file])).values()];
+}
+
+/**
+ * Runs one process's file queue through a worker pool sized to the plan's
+ * aiPerProcess. Callers run different processes' queues concurrently
+ * (Promise.all); this is the per-process manager that keeps one process's own
+ * workers from over-running its cap.
+ */
+async function runProcessQueue(userId, process, files, ctx) {
+  const limit = Math.max(1, ctx.plan.aiPerProcess ?? 1);
+  return mapWithConcurrency(files, limit, async (file) => {
+    bumpWorkers(process.id, 1);
+    try {
+      return await processFile(userId, file, process, ctx);
+    } finally {
+      bumpWorkers(process.id, -1);
+    }
+  });
+}
+
 async function processFile(userId, file, process, ctx) {
   if (ctx.credits <= 0) return "blocked";
+  // Reserved synchronously, before any await: JS runs this function up to its first
+  // await without interruption, so this check-and-decrement can't race another
+  // concurrent worker's. Released below for every outcome that isn't actually charged.
+  ctx.credits -= 1;
 
   const claim = await processed.claimFile(userId, file.id, file.name, process.id);
-  if (!claim) return "skipped";
+  if (!claim) {
+    ctx.credits += 1;
+    return "skipped";
+  }
 
   try {
     if (Number(file.size) > env.gemini.maxImageBytes) {
@@ -131,9 +212,7 @@ async function processFile(userId, file, process, ctx) {
       throw new Error("DriveTag can only view this image, so it can't rename or move it. Ask for Editor access to the Raw folder.");
     }
 
-    // In memory for exactly as long as the classification takes.
-    const buffer = await getFileBuffer(userId, file.id);
-    const result = await classifyImage(buffer, file.mimeType, process);
+    const result = await classifyFile(userId, file, process);
     const destination = resolveDestination(process, result.destination, ctx);
 
     const newName = renderFileName(
@@ -153,6 +232,7 @@ async function processFile(userId, file, process, ctx) {
 
     // A run slow enough to be declared stale may have been taken over; the new owner moves the file.
     if (!(await processed.holdsClaim(userId, file.id, claim))) {
+      ctx.credits += 1; // the new owner charges for this file, not us
       logger.warn("Claim taken over before rename; leaving the file to its new owner", { userId, fileId: file.id });
       return "skipped";
     }
@@ -178,10 +258,14 @@ async function processFile(userId, file, process, ctx) {
     );
 
     if (!bucket) {
+      ctx.credits += 1; // nothing was charged; release the reservation
       logger.warn("Claim lost before recording the result", { userId, fileId: file.id, newName });
-    } else {
-      ctx.credits = bucket === "overage" ? 0 : ctx.credits - 1;
+    } else if (bucket === "overage") {
+      // Only reachable when two backend instances overlap mid-deploy: the local count
+      // and the database have drifted apart. Stop this run from reserving any more.
+      ctx.credits = 0;
     }
+    // Otherwise the reservation taken at the top of this call is exactly what was charged.
     // Custom tag values can hold client names; log only where the file went.
     logger.info("File tagged and moved", {
       userId,
@@ -193,6 +277,7 @@ async function processFile(userId, file, process, ctx) {
     });
     return "completed";
   } catch (err) {
+    ctx.credits += 1; // failures are never charged; release the reservation
     if (!(await processed.recordFailure(userId, file.id, claim, err.message))) {
       logger.warn("Claim lost before recording the failure", { userId, fileId: file.id });
     }
@@ -213,6 +298,20 @@ async function fastForward(channel, reason) {
   logger.info("Changes feed fast-forwarded", { userId: channel.user_id, reason });
 }
 
+/** This page's matched, per-process-deduplicated files, grouped by the process whose manager runs them. */
+function groupChangesByProcess(changes, ctx) {
+  const byProcess = new Map(); // process → Map(fileId → file)
+  for (const change of changes) {
+    if (change.removed) continue;
+    const process = matchProcess(change.file, ctx);
+    if (!process) continue;
+    let files = byProcess.get(process);
+    if (!files) byProcess.set(process, (files = new Map()));
+    files.set(change.file.id, change.file);
+  }
+  return [...byProcess].map(([process, files]) => [process, [...files.values()]]);
+}
+
 async function sweepChanges(channel) {
   const userId = channel.user_id;
   const ctx = await loadSweepContext(userId);
@@ -225,15 +324,12 @@ async function sweepChanges(channel) {
   while (pageToken) {
     const page = await listChanges(userId, pageToken);
 
-    // Sequential on purpose: one image buffer alive at a time, and it keeps
-    // us inside Gemini's rate limits.
-    for (const change of page.changes ?? []) {
-      if (change.removed) continue;
-      const process = matchProcess(change.file, ctx);
-      if (!process) continue;
-      if (ctx.credits <= 0) return fastForward(channel, "ran out of image credits mid-sweep");
-      await processFile(userId, change.file, process, ctx);
-    }
+    // Each matched process gets its own worker pool; different processes' pools run
+    // concurrently with each other (mapWithConcurrency caps one process's own pool).
+    const queues = groupChangesByProcess(page.changes ?? [], ctx);
+    const outcomes = (await Promise.all(queues.map(([process, files]) => runProcessQueue(userId, process, files, ctx)))).flat();
+
+    if (outcomes.includes("blocked")) return fastForward(channel, "ran out of image credits mid-sweep");
 
     if (page.nextPageToken) {
       pageToken = page.nextPageToken;
@@ -307,15 +403,17 @@ export async function processRawFolder(userId, { processId = null, retryFailed =
     if (!ctx) return;
 
     const targets = ctx.processes.filter((process) => ctx.runnableIds.has(process.id) && (!processId || process.id === processId));
+    const queues = [];
     for (const process of targets) {
-      const files = await listImagesInFolder(userId, process.raw_folder_id, SUPPORTED_MIME_TYPES);
+      const files = dedupeById(await listImagesInFolder(userId, process.raw_folder_id, SUPPORTED_MIME_TYPES));
       summary.found += files.length;
       if (retryFailed) await processed.releaseFailed(userId, files.map((file) => file.id));
-
-      for (const file of files) {
-        summary[await processFile(userId, file, process, ctx)] += 1;
-      }
+      queues.push([process, files]);
     }
+
+    // Each process's queue runs through its own worker pool; different processes run concurrently.
+    const outcomes = (await Promise.all(queues.map(([process, files]) => runProcessQueue(userId, process, files, ctx)))).flat();
+    for (const outcome of outcomes) summary[outcome] += 1;
     logger.info("Raw folders organized", { userId, processId, ...summary });
   });
 
@@ -399,11 +497,19 @@ export async function getProcessesStatus(userId, processes) {
     }
   });
 
+  // Only non-zero entries, per the dashboard contract (absent = 0).
+  const workers = {};
+  for (const process of processes) {
+    const count = workerCounts.get(process.id);
+    if (count) workers[process.id] = count;
+  }
+
   return {
     syncing: Boolean(state),
     kind: state?.kind ?? null,
     activeProcessId: state?.processId ?? null,
     statuses: Object.fromEntries(entries),
+    workers,
   };
 }
 

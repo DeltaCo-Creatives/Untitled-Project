@@ -4,7 +4,11 @@ export const FIELD_CLASSES =
   'w-full rounded-2xl border bg-canvas px-4 py-3 text-sm font-semibold text-ink placeholder:font-normal placeholder:text-ink-soft focus:outline-none focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60';
 
 function fieldTone(error?: string | null) {
-  return error ? 'border-rose focus:border-rose focus:ring-rose/40' : 'border-line focus:border-lavender focus:ring-lavender/40';
+  // border-ink-soft, not border-line: the pale line token is under 3:1 against a white/canvas field, which
+  // fails the non-text (UI component boundary) contrast minimum for an unfocused input's outline.
+  return error
+    ? 'border-rose-ink/60 focus:border-rose focus:ring-rose/40'
+    : 'border-ink-soft/80 focus:border-lavender focus:ring-lavender/40';
 }
 
 interface FieldFrameProps {

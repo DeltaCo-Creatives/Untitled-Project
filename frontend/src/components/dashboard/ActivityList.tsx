@@ -143,11 +143,16 @@ export function ActivityList({ activity, processes, live, className = '' }: Acti
           Recent activity
         </h2>
         {live && (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-butter-soft px-3 py-1 text-xs font-bold" role="status">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-butter-soft px-3 py-1 text-xs font-bold">
             <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden /> Updating live
           </span>
         )}
       </div>
+      {/* Persistent so the "live" state change is reliably announced, rather than relying on a live region
+          that only enters the DOM once polling starts. */}
+      <p className="sr-only" aria-live="polite">
+        {live ? 'Activity is updating live.' : ''}
+      </p>
 
       {showFilter &&
         (processes.length <= MAX_FILTER_CHIPS ? (

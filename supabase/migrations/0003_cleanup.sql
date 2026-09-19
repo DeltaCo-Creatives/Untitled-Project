@@ -1,6 +1,6 @@
 -- DriveTag AI — 0003: remove the legacy single-folder config and the trial
 -- Run in the Supabase SQL Editor ONLY after the cleanup deploy is live (the
--- backend that no longer serves /api/drive/config). See ForDev.md. Safe to re-run.
+-- backend that no longer serves /api/drive/config). See backend/README.md. Safe to re-run.
 
 begin;
 

@@ -233,7 +233,7 @@ export function TagFieldsEditor({ fields, onChange, errors, limits, disabled = f
                                 })
                               }
                               disabled={disabled}
-                              className="rounded font-bold text-lavender-deep underline-offset-2 hover:text-ink hover:underline focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60"
+                              className="rounded font-bold text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60"
                             >
                               Match the label
                             </button>

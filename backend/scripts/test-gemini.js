@@ -72,7 +72,7 @@ async function loadProcess(args) {
 
 async function main() {
   if (!env.gemini.apiKey) {
-    throw new Error("GEMINI_API_KEY is not set in backend/.env (see tutorial.md).");
+    throw new Error("GEMINI_API_KEY is not set in backend/.env (see backend/README.md).");
   }
 
   const args = process.argv.slice(2);

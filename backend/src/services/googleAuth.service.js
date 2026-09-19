@@ -6,7 +6,7 @@ import { getRefreshToken } from "../repositories/credentials.repo.js";
  * Full `drive` scope is required, not the narrower `drive.file`: the product
  * must read images that *other people* drop into the watched folder, which a
  * per-file grant does not cover. This makes the app subject to Google's
- * restricted-scope verification — see ForDev.md.
+ * restricted-scope verification — see backend/README.md.
  */
 export const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"];
 

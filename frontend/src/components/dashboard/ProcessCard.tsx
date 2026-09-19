@@ -53,6 +53,8 @@ interface ProcessCardProps {
   busyElsewhere: boolean;
   /** Determinate progress when this tab started the run. */
   progress: OrganizeProgress | null;
+  /** AI workers busy on this process right now (0 when idle or talking to an older backend). */
+  workers: number;
   onOrganizeStarted: (processId: string, response: OrganizeResponse, retryFailed: boolean) => void;
   onProcessChanged: (process: WorkProcess) => void;
   onReload: () => Promise<void>;
@@ -84,6 +86,7 @@ export function ProcessCard({
   organizing,
   busyElsewhere,
   progress,
+  workers,
   onOrganizeStarted,
   onProcessChanged,
   onReload,
@@ -113,6 +116,10 @@ export function ProcessCard({
   // New arrivals get sorted on their own; "Organize now" is only for images that were already waiting.
   const autoSorting = sortingActive && !usage?.exhausted;
   const promoteOrganize = waiting > 0 && canOrganize && !autoSorting;
+
+  // How many AI workers this process has going right now, and the plan's quiet capacity line when it's idle.
+  const showWorkerCount = workers > 0;
+  const showIdleCapacity = !showWorkerCount && process.active && !folderError && Boolean(plan?.aiPerProcess);
 
   // ------------------------------------------------------------------ actions
 
@@ -481,6 +488,15 @@ export function ProcessCard({
             {counts && !organizing && waiting > 0 && failed > 0 && (
               <p className="mt-1 text-sm font-bold text-rose-ink">Plus {plural(failed, 'image', 'images')} that failed earlier.</p>
             )}
+            {showWorkerCount && (
+              <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-extrabold text-ink-soft">
+                <LoaderCircle className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />
+                {plural(workers, 'AI', 'AI')} sorting
+              </p>
+            )}
+            {showIdleCapacity && (
+              <p className="mt-1.5 text-xs text-ink-soft">Up to {plan?.aiPerProcess} AI at once on your plan</p>
+            )}
           </div>
         </div>
         {organizing && (
@@ -517,7 +533,7 @@ export function ProcessCard({
             type="button"
             onClick={() => setMessage(null)}
             aria-label="Dismiss message"
-            className="rounded-lg p-0.5 text-current opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-current opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60"
           >
             <X className="h-4 w-4" />
           </button>

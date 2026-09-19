@@ -6,6 +6,7 @@ import { formatCount, plural } from '../../lib/format';
 import { usageSummary } from '../../lib/messages';
 import { ButtonLink } from '../ui/Button';
 import { UsageMeter } from '../billing/UsageMeter';
+import { aiWorkersFeature } from '../billing/planFeatures';
 
 interface UsageCardProps {
   plan: CurrentPlan | null;
@@ -77,7 +78,7 @@ export function UsageCard({ plan, usage, className = '' }: UsageCardProps) {
             </div>
           )}
           <p className="mt-4 text-sm text-ink-soft">
-            Includes {plural(plan.maxProcesses, 'work process', 'work processes')} · {allowance}
+            Includes {plural(plan.maxProcesses, 'work process', 'work processes')} · {aiWorkersFeature(plan)} · {allowance}
           </p>
         </>
       ) : (

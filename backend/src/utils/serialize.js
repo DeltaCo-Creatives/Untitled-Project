@@ -53,6 +53,7 @@ export function serializeEntitlement(entitlement) {
       id: plan.id,
       label: plan.label,
       maxProcesses: plan.maxProcesses,
+      aiPerProcess: plan.aiPerProcess,
       freeImages: plan.freeImages,
       monthlyImages: plan.monthlyImages,
     },

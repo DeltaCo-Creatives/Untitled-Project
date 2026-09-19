@@ -1,8 +1,9 @@
 import { useId } from 'react';
 import { ArrowRight, BadgeCheck, Building, Check, Clock3, Palette, Sparkles, Sprout, Users, type LucideIcon } from 'lucide-react';
-import type { BillingInterval, PlanId, PlanInfo } from '../../lib/api';
+import type { PlanId, PlanInfo } from '../../lib/api';
+import { plural } from '../../lib/format';
 import { Button, ButtonLink } from '../ui/Button';
-import { PAYMENTS_PENDING_NOTE, billingNote, isFreePlan, planFeatures, priceText } from './planFeatures';
+import { PAYMENTS_PENDING_NOTE, formatPrice, isFreePlan, monthsFree, planFeatures } from './planFeatures';
 
 const ACCENTS: Record<PlanId, { icon: LucideIcon; bubble: string; check: string }> = {
   free: { icon: Sprout, bubble: 'bg-sage', check: 'bg-sage' },
@@ -13,29 +14,22 @@ const ACCENTS: Record<PlanId, { icon: LucideIcon; bubble: string; check: string 
 
 interface PlanCardProps {
   plan: PlanInfo;
-  interval: BillingInterval;
+  currency: string;
+  /** false while no payment provider is integrated: purchase buttons show "Coming soon" instead. */
   current?: boolean;
-  /** Wears the "Most popular" ribbon. */
-  featured?: boolean;
   signedIn?: boolean;
   compact?: boolean;
 }
 
-export function PlanCard({
-  plan,
-  interval,
-  current = false,
-  featured = false,
-  signedIn = false,
-  compact = false,
-}: PlanCardProps) {
+export function PlanCard({ plan, currency, current = false, signedIn = false, compact = false }: PlanCardProps) {
   const titleId = useId();
   const accent = ACCENTS[plan.id] ?? ACCENTS.creator;
   const Icon = accent.icon;
   const free = isFreePlan(plan);
-  const note = billingNote(plan, interval);
+  const featured = plan.popular;
   const features = planFeatures(plan, { compact });
-  const priced = Boolean(plan.priceLabel) || free;
+  const yearly = plan.price.yearly;
+  const freeMonths = !free && yearly != null ? monthsFree(plan.price.monthly, yearly) : 0;
 
   return (
     <article
@@ -47,7 +41,7 @@ export function PlanCard({
       {featured && (
         <span className="plan-ribbon absolute inset-x-0 -top-3.5 mx-auto inline-flex w-fit items-center gap-1 rounded-full bg-gradient-to-r from-lavender to-periwinkle px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-ink shadow-soft">
           <Sparkles className="h-3.5 w-3.5" aria-hidden />
-          Most popular
+          Recommended
         </span>
       )}
 
@@ -69,16 +63,30 @@ export function PlanCard({
       <p className="mt-1 text-sm leading-relaxed text-ink-soft">{plan.tagline}</p>
 
       <div className={`border-b border-dashed border-line ${compact ? 'my-4 pb-4' : 'my-5 pb-5'}`}>
-        <p className={`font-display font-bold tracking-tight ${priced ? 'text-4xl' : 'text-3xl'} ${priced ? 'text-ink' : 'text-lavender-deep'}`}>
-          {priceText(plan)}
-        </p>
-        <p
-          className={`plan-billing mt-1.5 inline-flex rounded-full text-xs font-bold ${
-            note.emphasis ? 'bg-butter px-2.5 py-0.5 text-ink' : 'text-ink-soft'
-          }`}
-        >
-          {note.text}
-        </p>
+        {free ? (
+          <>
+            <p className="font-display text-4xl font-bold tracking-tight text-ink">
+              <span aria-hidden>{formatPrice(0, currency)}</span>
+              <span className="sr-only">Free</span>
+            </p>
+            <p className="plan-billing mt-1.5 text-xs font-bold text-ink-soft">Free forever · no credit card</p>
+          </>
+        ) : (
+          <>
+            <p className="font-display text-4xl font-bold tracking-tight text-ink">
+              <span aria-hidden>{formatPrice(plan.price.monthly, currency)}</span>
+              <span aria-hidden className="text-lg font-bold text-ink-soft">
+                /month
+              </span>
+              <span className="sr-only">{formatPrice(plan.price.monthly, currency)} per month</span>
+            </p>
+            {yearly != null && (
+              <p className="plan-billing mt-1.5 text-xs font-bold text-ink-soft">
+                or {formatPrice(yearly, currency)}/year{freeMonths >= 1 ? ` — ${plural(freeMonths, 'month', 'months')} free` : ''}
+              </p>
+            )}
+          </>
+        )}
       </div>
 
       <ul className={`space-y-2.5 ${compact ? 'mb-5' : 'mb-7'}`}>
@@ -99,7 +107,8 @@ export function PlanCard({
             <ArrowRight className="h-4 w-4" aria-hidden />
           </ButtonLink>
         ) : (
-          // The wrapper carries the tooltip too: some browsers skip titles on disabled buttons.
+          // No payment provider yet: prices are shown, purchasing isn't. The wrapper carries the tooltip too, since
+          // some browsers skip titles on disabled buttons.
           <span className="block" title={PAYMENTS_PENDING_NOTE}>
             <Button
               disabled

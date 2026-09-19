@@ -17,6 +17,7 @@ import { formatCount } from '../lib/format';
 import { gsap, useGSAP, ScrollTrigger, SplitText, MOTION_OK } from '../lib/gsap';
 import { useReveal } from '../hooks/useReveal';
 import { usePlans } from '../hooks/usePlans';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { ButtonLink } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -24,6 +25,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { TagFlowIllustration } from '../components/TagFlowIllustration';
 import { MemoryDemo } from '../components/MemoryDemo';
 import { PlanGrid } from '../components/billing/PlanGrid';
+import { TransparencyNote } from '../components/billing/TransparencyNote';
 import { freeImageAllowance } from '../components/billing/planFeatures';
 
 const STEPS = [
@@ -36,9 +38,9 @@ const STEPS = [
   {
     icon: Sparkles,
     bubble: 'bg-butter',
-    title: 'Gemini tags it',
+    title: 'The AI tags it',
     description:
-      'The moment a file lands, Gemini Flash reads it in memory, fills in your tags, and picks the destination that matches your descriptions — in seconds.',
+      'The moment a file lands, our AI reads it in memory, fills in your tags, and picks the destination that matches your descriptions — in seconds.',
   },
   {
     icon: FolderCheck,
@@ -64,7 +66,7 @@ const FEATURES = [
   {
     icon: Zap,
     bubble: 'bg-butter-soft',
-    title: 'Powered by Gemini Flash',
+    title: 'Powered by advanced AI',
     description: 'Fast, consistent visual classification on every image, without anyone having to open it.',
   },
   {
@@ -77,7 +79,8 @@ const FEATURES = [
 
 const PRIVACY_POINTS = [
   'Images are processed in memory — never written to disk, a database, or a storage bucket.',
-  'Sent to Gemini inline, not through an upload API that would keep a copy.',
+  'Sent to the AI inside the request itself — never uploaded to a file store.',
+  'The AI provider doesn’t use your images to train its models.',
   'We keep only what your history needs: filenames, tags, and status.',
   'Disconnect anytime — we revoke Google access and delete your stored token.',
 ];
@@ -85,6 +88,7 @@ const PRIVACY_POINTS = [
 const FLOATING_TAGS = ['portrait', 'product', 'landscape', 'event', 'flat lay', 'golden hour'];
 
 export default function Landing() {
+  useDocumentTitle('Auto-organize your Google Drive');
   const { user } = useAuth();
   const pageRef = useRef<HTMLDivElement>(null);
   const ctaHref = user ? '/dashboard' : '/login';
@@ -198,16 +202,16 @@ export default function Landing() {
             <Logo />
           </div>
           <div className="flex items-center gap-1 sm:gap-2">
-            <a href="#how" className="nav-item hidden rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink sm:inline-block">
+            <a href="#how" className="nav-item hidden rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60 sm:inline-block">
               How it works
             </a>
-            <a href="#privacy" className="nav-item hidden rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink sm:inline-block">
-              Privacy
+            <a href="#privacy" className="nav-item hidden rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60 sm:inline-block">
+              Zero-Retention
             </a>
             {/* One element either way, so the entrance animation keeps its target when plans fail to load. */}
             <a
               href={pricingState === 'hidden' ? '/plans' : '#pricing'}
-              className="nav-item hidden rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink sm:inline-block"
+              className="nav-item hidden rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60 sm:inline-block"
             >
               Pricing
             </a>
@@ -227,7 +231,7 @@ export default function Landing() {
         </nav>
       </header>
 
-      <main>
+      <main id="main-content">
         {/* Hero */}
         <section className="mx-auto grid max-w-6xl items-center gap-12 px-4 pb-20 pt-10 sm:pt-16 lg:grid-cols-2 lg:gap-8 lg:pb-28">
           <div className="text-center lg:text-left">
@@ -236,7 +240,7 @@ export default function Landing() {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sage opacity-80 motion-reduce:animate-none" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-sage-deep" />
               </span>
-              Zero-Retention — your images are never stored
+              Zero-Retention — DriveTag never stores your images
             </div>
 
             <h1 className="hero-title mb-6 text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl lg:text-7xl">
@@ -281,7 +285,7 @@ export default function Landing() {
                 <ShieldCheck className="h-4 w-4 text-lavender-deep" /> Zero-Retention
               </li>
               <li className="inline-flex items-center gap-1.5">
-                <Sparkles className="h-4 w-4 text-lavender-deep" /> Gemini Flash tagging
+                <Sparkles className="h-4 w-4 text-lavender-deep" /> AI-powered tagging
               </li>
               <li className="inline-flex items-center gap-1.5">
                 <FolderCheck className="h-4 w-4 text-lavender-deep" /> Works in your Drive
@@ -296,7 +300,7 @@ export default function Landing() {
 
         {/* How it works */}
         <section id="how" className="mx-auto max-w-6xl scroll-mt-24 px-4 py-20">
-          <p data-reveal className="mb-3 text-center text-sm font-extrabold uppercase tracking-widest text-lavender-deep">
+          <p data-reveal className="mb-3 text-center text-sm font-extrabold uppercase tracking-widest text-ink-soft">
             How it works
           </p>
           <h2 data-reveal className="mb-4 text-center text-4xl font-bold tracking-tight sm:text-5xl">
@@ -338,7 +342,7 @@ export default function Landing() {
         {/* Zero-Retention */}
         <section id="privacy" className="mx-auto grid max-w-6xl scroll-mt-24 items-center gap-12 px-4 py-20 lg:grid-cols-2">
           <div>
-            <p data-reveal className="mb-3 text-sm font-extrabold uppercase tracking-widest text-lavender-deep">
+            <p data-reveal className="mb-3 text-sm font-extrabold uppercase tracking-widest text-ink-soft">
               Zero-Retention
             </p>
             <h2 data-reveal className="mb-5 text-4xl font-bold tracking-tight sm:text-5xl">
@@ -357,6 +361,14 @@ export default function Landing() {
                 </li>
               ))}
             </ul>
+            <p data-reveal className="mt-6 text-sm leading-relaxed text-ink-soft">
+              Like other major AI providers, ours may keep request logs for a limited time (up to 55 days) solely to
+              prevent abuse — never to train models. Full details in the{' '}
+              <Link to="/privacy#zero-retention" className="font-semibold text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
+                Privacy Policy
+              </Link>
+              .
+            </p>
           </div>
           <div data-reveal>
             <MemoryDemo />
@@ -386,7 +398,7 @@ export default function Landing() {
         {/* Pricing */}
         {pricingState !== 'hidden' && (
           <section id="pricing" aria-labelledby="pricing-heading" className="mx-auto max-w-6xl scroll-mt-24 px-4 py-20">
-            <p data-reveal className="mb-3 text-center text-sm font-extrabold uppercase tracking-widest text-lavender-deep">
+            <p data-reveal className="mb-3 text-center text-sm font-extrabold uppercase tracking-widest text-ink-soft">
               Pricing
             </p>
             <h2 data-reveal id="pricing-heading" className="mb-4 text-center text-4xl font-bold tracking-tight sm:text-5xl">
@@ -398,7 +410,7 @@ export default function Landing() {
             </p>
 
             {plans ? (
-              <PlanGrid plans={plans.plans} signedIn={Boolean(user)} compact />
+              <PlanGrid plans={plans.plans} currency={plans.currency} signedIn={Boolean(user)} compact />
             ) : (
               <div role="status" className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
                 <span className="sr-only">Loading plans…</span>
@@ -413,7 +425,17 @@ export default function Landing() {
                 Compare plans
                 <ArrowRight className="h-4 w-4" aria-hidden />
               </ButtonLink>
+              {plans && (
+                <p className="mt-4 text-sm font-bold text-ink-soft">
+                  Sorting documents too?{' '}
+                  <Link to="/plans#documents" className="text-ink-soft underline hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
+                    See document plans
+                  </Link>
+                </p>
+              )}
             </div>
+
+            <TransparencyNote currency={plans?.currency ?? 'USD'} compact className="mt-10" />
           </section>
         )}
 
@@ -452,25 +474,6 @@ export default function Landing() {
           </div>
         </section>
       </main>
-
-      <footer className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-5 border-t border-line px-4 py-10 sm:flex-row">
-        <Logo size="sm" />
-        <nav aria-label="Footer" className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm font-bold text-ink-soft">
-          <a href="#how" className="hover:text-ink">
-            How it works
-          </a>
-          <a href="#privacy" className="hover:text-ink">
-            Privacy
-          </a>
-          <Link to="/plans" className="hover:text-ink">
-            Pricing
-          </Link>
-          <Link to={user ? '/dashboard' : '/login'} className="hover:text-ink">
-            {user ? 'Dashboard' : 'Log in'}
-          </Link>
-        </nav>
-        <p className="text-sm text-ink-soft">Zero-Retention by design.</p>
-      </footer>
     </div>
   );
 }

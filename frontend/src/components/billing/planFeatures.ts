@@ -1,28 +1,51 @@
-import type { BillingInterval, PlanId, PlanInfo, PlansResponse, TopupPack } from '../../lib/api';
+import type { PlanInfo, PlansResponse, TopupPack } from '../../lib/api';
 import { formatCount, plural } from '../../lib/format';
-
-/** The plan that wears the "Most popular" ribbon. */
-export const FEATURED_PLAN_ID: PlanId = 'studio';
 
 /** Used before /api/plans answers (or if it can't), so marketing copy never shows a blank. */
 export const DEFAULT_FREE_IMAGES = 100;
 
-/** Tooltip and helper copy for every purchase button until a payment provider is integrated. */
-export const PAYMENTS_PENDING_NOTE = 'Payments launch soon. Paid plans and image packs open up then.';
+/** Tooltip and helper copy for every purchase button while checkout isn't wired up yet. */
+export const PAYMENTS_PENDING_NOTE = 'Payments launch soon. This will be purchasable then.';
 
 export function isFreePlan(plan: Pick<PlanInfo, 'id'>) {
   return plan.id === 'free';
 }
 
-/** "Free" for the free plan; otherwise the price, or "Coming soon" until payments launch. */
-export function priceText(plan: Pick<PlanInfo, 'id' | 'priceLabel'>) {
-  if (plan.priceLabel) return plan.priceLabel;
-  return isFreePlan(plan) ? 'Free' : 'Coming soon';
+/** `9.99` + `"USD"` → `"$9.99"`. Zero renders without decimals: `"$0"`. */
+export function formatPrice(amount: number, currency: string) {
+  const digits = amount === 0 ? 0 : 2;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(amount);
+}
+
+/** How many months a yearly price saves versus paying monthly, rounded to the nearest integer, floored at 0. */
+export function monthsFree(monthly: number, yearly: number) {
+  if (monthly <= 0) return 0;
+  return Math.max(0, Math.round(12 - yearly / monthly));
+}
+
+/** A per-unit price for a pack — cents when that reads better ("2¢ per image"), otherwise full currency. */
+export function perUnitPrice(price: number, units: number, unitLabel: string, currency: string) {
+  if (units <= 0) return null;
+  const unit = price / units;
+  if (currency === 'USD' && unit < 1) return `${Math.max(1, Math.round(unit * 100))}¢ per ${unitLabel}`;
+  return `${formatPrice(unit, currency)} per ${unitLabel}`;
 }
 
 /** "1 AI work process" / "15 AI work processes" */
 export function processesFeature(plan: Pick<PlanInfo, 'maxProcesses'>) {
   return plural(plan.maxProcesses, 'AI work process', 'AI work processes');
+}
+
+/** "1 AI worker sorting at a time" / "3 AI workers sorting each process at once" */
+export function aiWorkersFeature(plan: Pick<PlanInfo, 'aiPerProcess'>) {
+  return plan.aiPerProcess === 1
+    ? '1 AI worker sorting at a time'
+    : `${plan.aiPerProcess} AI workers sorting each process at once`;
 }
 
 /** "100 images, no time limit" for Free; "5,000 images every month" for paid plans. */
@@ -31,39 +54,16 @@ export function imagesFeature(plan: Pick<PlanInfo, 'freeImages' | 'monthlyImages
   return `${formatCount(plan.freeImages)} images, no time limit`;
 }
 
-export function supportsInterval(plan: Pick<PlanInfo, 'billing'>, interval: BillingInterval) {
-  return plan.billing.includes(interval);
-}
-
-/** True when at least one plan can be billed yearly, i.e. the Monthly/Yearly toggle means something. */
-export function offersYearly(plans: Pick<PlanInfo, 'billing'>[]) {
-  return plans.some((plan) => supportsInterval(plan, 'yearly'));
-}
-
-export interface BillingNote {
-  text: string;
-  /** The plan can't be billed the way the toggle says; worth a highlight. */
-  emphasis: boolean;
-}
-
-/** The small line under the price. It follows the Monthly/Yearly toggle. */
-export function billingNote(plan: Pick<PlanInfo, 'id' | 'billing'>, interval: BillingInterval): BillingNote {
-  if (isFreePlan(plan) || plan.billing.length === 0) return { text: 'No credit card needed', emphasis: false };
-  if (!supportsInterval(plan, 'yearly')) return { text: 'Monthly billing only', emphasis: interval === 'yearly' };
-  if (!supportsInterval(plan, 'monthly')) return { text: 'Yearly billing only', emphasis: interval === 'monthly' };
-  return { text: interval === 'yearly' ? 'Billed yearly' : 'Billed monthly', emphasis: false };
-}
-
 /** Feature bullets for a plan card. `compact` keeps the three that matter most. */
 export function planFeatures(plan: PlanInfo, { compact = false }: { compact?: boolean } = {}): string[] {
-  const features = [processesFeature(plan), imagesFeature(plan), 'Custom destinations, naming and tags'];
-  if (!compact) features.push('Image packs available');
+  const features = [processesFeature(plan), aiWorkersFeature(plan), imagesFeature(plan)];
+  if (!compact) features.push('Custom destinations, naming and tags');
   return features;
 }
 
-/** "250 images" */
-export function packLabel(pack: Pick<TopupPack, 'images'>) {
-  return `${formatCount(pack.images)} images`;
+/** "250 images" / "250 documents" */
+export function packLabel(pack: Pick<TopupPack, 'images'>, unit: string = 'image') {
+  return `${formatCount(pack.images)} ${unit}${pack.images === 1 ? '' : 's'}`;
 }
 
 /** The Free plan's lifetime allowance from the plans payload, with a sensible default. */

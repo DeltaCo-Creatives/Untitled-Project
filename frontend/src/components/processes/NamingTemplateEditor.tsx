@@ -220,7 +220,7 @@ export function NamingTemplateEditor({
               type="button"
               onClick={reset}
               disabled={disabled}
-              className="inline-flex items-center gap-1 rounded-lg px-1 text-xs font-bold text-lavender-deep transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60 disabled:opacity-60"
+              className="inline-flex items-center gap-1 rounded-lg px-1 text-xs font-bold text-ink-soft underline underline-offset-2 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60 disabled:opacity-60"
             >
               <RotateCcw className="h-3.5 w-3.5" /> Reset to {DEFAULT_TEMPLATE}
             </button>

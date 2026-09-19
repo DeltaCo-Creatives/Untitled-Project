@@ -20,6 +20,12 @@ function optional(name, fallback) {
   return process.env[name] || fallback;
 }
 
+/** Like optional(), but only for a positive integer — an unusable value (0, negative, non-numeric) falls back. */
+function optionalPositiveInt(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   port: Number(optional("PORT", "3001")),
@@ -68,6 +74,13 @@ export const env = {
   autoSync: {
     intervalSeconds: Number(optional("AUTO_SYNC_INTERVAL_SECONDS", "0")),
   },
+
+  pipeline: {
+    // Caps how many downloads+classifications run at once across every user's sweep or
+    // "Organize now" (pipeline.service.js's aiJobSlots semaphore), since each holds an
+    // image buffer in memory and Gemini has per-project rate limits.
+    maxConcurrentAiJobs: optionalPositiveInt("MAX_CONCURRENT_AI_JOBS", 20),
+  },
 };
 
 const LOCAL_ADDRESS = /localhost|127\.0\.0\.1/;
@@ -106,7 +119,7 @@ export function assertRequiredEnv() {
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}\n` +
-        "Add them to backend/.env (every variable is listed in tutorial.md).",
+        "Add them to backend/.env (every variable is listed in backend/README.md).",
     );
   }
 }

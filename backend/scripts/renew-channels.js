@@ -8,7 +8,8 @@ const { renewExpiringChannels } = await import("../src/services/driveWatch.servi
 
 /**
  * Drive watch channels expire; when one lapses, notifications stop silently.
- * Run this on a schedule (see ForDev.md) — hourly is plenty.
+ * Optional: production already renews hourly in-process (NODE_ENV=production). Run this on an external
+ * schedule only as a safety net for instance downtime, or for a one-off renewal (see backend/README.md).
  */
 const results = await renewExpiringChannels();
 logger.info("Channel renewal sweep finished", results);

@@ -35,24 +35,57 @@ export type WatchMode = 'live' | 'polling';
 export type PlanId = 'free' | 'creator' | 'studio' | 'enterprise';
 export type BillingInterval = 'monthly' | 'yearly';
 
+/** USD amounts. yearly is null where the plan is monthly-only (or free). */
+export interface Price {
+  monthly: number;
+  yearly: number | null;
+}
+
 export interface PlanInfo {
   id: PlanId;
   label: string;
   tagline: string;
   maxProcesses: number;
+  /** AI workers that can sort one process's Raw folder at the same time. */
+  aiPerProcess: number;
   /** Lifetime images (Free only). */
   freeImages: number;
   /** Images per billing period (paid plans). */
   monthlyImages: number;
   billing: BillingInterval[];
-  /** null until payments launch: show "Coming soon". */
-  priceLabel: string | null;
+  price: Price;
+  /** The plan the pricing page highlights. */
+  popular: boolean;
 }
 
 export interface TopupPack {
   id: string;
   images: number;
-  priceLabel: string | null;
+  price: number;
+}
+
+/** Document sorting is priced but not built yet: while available is false every document price is a preview. */
+export interface DocumentPricing {
+  available: boolean;
+  /** The AI reads at most this many pages of a document (the cost cap). */
+  pagesRead: number;
+  maxFileMb: number;
+  /** Lifetime documents on the Free plan. */
+  freeDocuments: number;
+  /** Add-on for an image plan, keyed by plan id; uses that plan's processes and AI workers. */
+  addons: Partial<Record<PlanId, { monthlyDocuments: number; price: Price }>>;
+  /** Document-only plans. */
+  plans: {
+    id: string;
+    label: string;
+    tagline: string;
+    maxProcesses: number;
+    aiPerProcess: number;
+    monthlyDocuments: number;
+    billing: BillingInterval[];
+    price: Price;
+  }[];
+  packs: { id: string; documents: number; price: number }[];
 }
 
 export interface ProcessLimits {
@@ -67,8 +100,10 @@ export interface ProcessLimits {
 }
 
 export interface PlansResponse {
+  currency: string;
   plans: PlanInfo[];
   topupPacks: TopupPack[];
+  documents: DocumentPricing;
   processLimits: ProcessLimits;
 }
 
@@ -76,6 +111,7 @@ export interface CurrentPlan {
   id: PlanId;
   label: string;
   maxProcesses: number;
+  aiPerProcess: number;
   freeImages: number;
   monthlyImages: number;
 }
@@ -196,6 +232,8 @@ export interface ProcessesStatus {
   /** The process being organized, or null for a sweep across all of them. */
   activeProcessId: string | null;
   statuses: Record<string, ProcessStatusEntry>;
+  /** AI workers busy on each process right now, keyed by process id (absent = 0). */
+  workers: Record<string, number>;
 }
 
 export interface OrganizeResponse {
@@ -322,6 +360,12 @@ export const api = {
   completeGoogleAuth: (pending: string) =>
     request<{ connected: boolean }>('/api/auth/google/complete', { method: 'POST', body: JSON.stringify({ pending }) }),
   disconnectGoogle: () => request<{ disconnected: boolean }>('/api/auth/google', { method: 'DELETE' }),
+  /**
+   * Permanently deletes the account: stops sorting, revokes Drive access at Google, then deletes every stored row.
+   * Files in Drive are never touched. 409 code `sorting_in_progress` while a sweep runs.
+   */
+  deleteAccount: () =>
+    request<{ deleted: boolean }>('/api/me', { method: 'DELETE', body: JSON.stringify({ confirm: 'DELETE' }) }),
 
   listFolders: ({ q, parentId, pageToken }: { q?: string; parentId?: string; pageToken?: string | null } = {}) =>
     request<FolderPage>(`/api/drive/folders${query({ q, parentId, pageToken })}`),

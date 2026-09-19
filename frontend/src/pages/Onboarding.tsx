@@ -25,6 +25,7 @@ import { gsap, useGSAP, Flip, MOTION_OK, prefersReducedMotion } from '../lib/gsa
 import { burstConfetti } from '../lib/confetti';
 import { browserTimeZone, formatCount } from '../lib/format';
 import { errorMessage, friendlyWatchError, usageSummary } from '../lib/messages';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { Button } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -210,6 +211,7 @@ function planNoteFor(plan: CurrentPlan | null, usage: Usage | null) {
 }
 
 export default function Onboarding() {
+  useDocumentTitle('Set up your first process');
   const navigate = useNavigate();
   const fieldPrefix = useId();
   const destinationsHeadingId = useId();
@@ -607,7 +609,7 @@ export default function Onboarding() {
         </Link>
       </div>
 
-      <main className="px-4 pb-16 pt-4 sm:pt-10">
+      <main id="main-content" className="px-4 pb-16 pt-4 sm:pt-10">
         <div className="onboarding-card mx-auto w-full max-w-2xl rounded-[2rem] border border-line bg-white p-5 shadow-lift sm:p-10">
           <ol ref={stepperRef} aria-label="Setup steps" className="mb-6 grid grid-cols-4 gap-1 rounded-2xl bg-lavender-soft p-1.5">
             {STEPS.map((item, i) => {
@@ -696,9 +698,32 @@ export default function Onboarding() {
                 <h2 tabIndex={-1} className="mb-3 text-3xl font-bold tracking-tight outline-none">
                   Connect Google Drive
                 </h2>
-                <p className="mx-auto mb-8 max-w-md leading-relaxed text-ink-soft">
+                <p className="mx-auto mb-4 max-w-md leading-relaxed text-ink-soft">
                   DriveTag needs its own Drive permission, separate from your login, so it can keep sorting while you’re
                   away. You can disconnect anytime.
+                </p>
+                <p className="mx-auto mb-8 max-w-md text-left text-sm leading-relaxed text-ink-soft">
+                  With this permission, DriveTag will:
+                </p>
+                <ul className="mx-auto mb-8 max-w-md space-y-1.5 text-left text-sm leading-relaxed text-ink-soft">
+                  <li className="flex gap-2">
+                    <Check aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-sage-deep" /> Read images others add to
+                    your Raw folders
+                  </li>
+                  <li className="flex gap-2">
+                    <Check aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-sage-deep" /> Rename and move them into
+                    the folders you choose
+                  </li>
+                  <li className="flex gap-2">
+                    <Check aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-sage-deep" /> Never delete anything
+                  </li>
+                </ul>
+                <p className="mx-auto mb-8 max-w-md text-xs leading-relaxed text-ink-soft">
+                  Details in the{' '}
+                  <Link to="/privacy#google-user-data" className="font-semibold text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
+                    Privacy Policy
+                  </Link>
+                  .
                 </p>
                 <Button onClick={handleConnectDrive} size="lg" magnetic>
                   Connect Google Drive <ArrowRight className="h-4 w-4" />
@@ -971,7 +996,7 @@ export default function Onboarding() {
                   >
                     {saving ? (
                       <>
-                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                        <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" />
                         {saving === 'create' ? 'Creating your folders…' : 'Switching on sorting…'}
                       </>
                     ) : (

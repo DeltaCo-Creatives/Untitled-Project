@@ -10,6 +10,8 @@ interface ConfirmDialogProps {
   busy?: boolean;
   /** danger for destructive actions (the default), primary for everything else. */
   tone?: 'danger' | 'primary';
+  /** Keeps the confirm button disabled regardless of `busy`, e.g. until a typed confirmation matches. */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -21,6 +23,7 @@ export function ConfirmDialog({
   confirmLabel,
   busy = false,
   tone = 'danger',
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -38,7 +41,7 @@ export function ConfirmDialog({
           <Button ref={cancelRef} variant="secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button variant={tone} onClick={onConfirm} disabled={busy}>
+          <Button variant={tone} onClick={onConfirm} disabled={busy || confirmDisabled}>
             {confirmLabel}
           </Button>
         </>

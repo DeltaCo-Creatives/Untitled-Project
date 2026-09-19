@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError, api } from '../lib/api';
 import { gsap, useGSAP, MOTION_OK, REDUCED_MOTION } from '../lib/gsap';
 import { errorMessage } from '../lib/messages';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { ButtonLink } from '../components/ui/Button';
 
@@ -30,6 +31,7 @@ function claimErrorMessage(err: unknown) {
 }
 
 export default function Connect() {
+  useDocumentTitle('Connecting Google Drive');
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const pageRef = useRef<HTMLDivElement>(null);
@@ -150,7 +152,7 @@ export default function Connect() {
       <div className="mx-auto max-w-6xl px-4 py-4">
         <Logo />
       </div>
-      <main className="flex min-h-[70vh] items-center justify-center px-4">
+      <main id="main-content" className="flex min-h-[70vh] items-center justify-center px-4">
         <div className="connect-card w-full max-w-md rounded-[2rem] border border-line bg-white p-8 text-center shadow-lift sm:p-10">
           <div className="relative mx-auto mb-6 h-24 w-24">
             {phase === 'success' &&

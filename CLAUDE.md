@@ -12,19 +12,26 @@ DriveTag AI is a B2B micro-SaaS that automatically organizes visual assets for c
 
 ## Current State
 
-**[Handover.md](Handover.md) is the authoritative snapshot of current state and next steps — read it before starting work, and update it when state changes.** In brief:
+Production-ready and live. Status, pricing and the document-sorting strategy are in [README.md](README.md). Setup, env vars, credentials, database helpers, deployment and operations are in [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md). Keep those three current when state or setup changes.
 
-- **Backend:** Drive OAuth, the watch-channel lifecycle, the change-feed sweep, Gemini classification, and rename/move are wired together. Users build **AI work processes**. Each process is a Raw folder feeding a Master folder, split into AI-chosen destination folders, with its own naming template, custom tag fields and instructions.
-  - **Plans:** Free / Creator / Studio / Enterprise limit how many processes a user has and how many images get sorted, with image usage metered. Limits live in `backend/src/config/plans.js`.
-  - Also includes a polling fallback for local dev and "Organize now" for images already in Raw.
-- **Frontend:** React 19 + Vite + Tailwind with real Supabase Google login and every screen backed by the API (`src/lib/api.ts`). Pages: Landing `/`, `/login`, `/plans`, and protected `/onboarding`, `/dashboard`, `/connect`, `/processes/new`, `/processes/:id`. The whole UI uses a pastel "Lavender garden" design system and GSAP animation throughout.
-- **Credentials:** accounts were set up and live-verified in a *different* working copy. `.env` files are gitignored and don't travel through git, so a given checkout may have blank credentials — `npm run dev` names what's missing. Both `.env.example` templates were deleted in commit `0bdd63d`; [tutorial.md](tutorial.md) lists every variable.
-- **Not built:** checkout and the payment-provider webhook (Lemon Squeezy vs Paddle undecided). Plans, limits, usage metering and the top-up credit ledger exist; until checkout exists, plans and credits are set by hand with the SQL helpers in ForDev.md. Also missing: `/privacy` and `/terms` pages, `helmet`/rate limiting, and any automated test suite.
-- **Schema rollout:** `supabase/migrations/0002_work_processes.sql` must be run in Supabase *before* deploying the backend that uses it. `0003_cleanup.sql` runs only after the cleanup release that removes the legacy `/api/drive/config` endpoints. See Handover.md.
-- **Production:** deployed from `production`. The frontend is on Vercel at `drivetag-ai.com`, the backend on DigitalOcean at `api.drivetag-ai.com` (`/health` 200). Login was broken on 2026-09-17 by three missing pieces: the Vercel SPA rewrite, `VITE_API_URL` on Vercel, and the Supabase Site URL/redirect allowlist, which still said `localhost:5173`. The code side is fixed; the dashboard steps are in [domainguide.md](domainguide.md) §2–§7. **Every external claim about production dates from 2026-09-17** — re-probe before relying on it.
-- **A `.env`-less checkout is normal.** `.env` files are gitignored, so a fresh clone (including any cloud session) has no credentials and no `node_modules`. `npm run dev` names what's missing.
-
-Other docs: [task.md](task.md) (scope checklist), [ForDev.md](ForDev.md) (setup runbook + SQL), [tutorial.md](tutorial.md) (per-credential guide). Keep them current when setup changes.
+- **Backend:** Drive OAuth, the watch-channel lifecycle, the change-feed sweep, AI classification and rename/move are wired together. Users build **AI work processes**. Each process is a Raw folder feeding a Master folder, split into AI-chosen destination folders, with its own naming template, custom tag fields and instructions.
+  - Each process is sorted by up to `plan.aiPerProcess` AI workers at once.
+  - Also included: a polling fallback, "Organize now" for images already in Raw, and self-service account deletion (`DELETE /api/me`).
+- **Plans:** Free / Creator / Studio / Enterprise limit processes, AI workers per process and images. Usage is metered, and prices are USD placeholders. Everything is in `backend/src/config/plans.js`.
+  - Document sorting is priced there (`DOCUMENTS`, `available: false`) but **not built**.
+- **Frontend:** React 19 + Vite + Tailwind. Real Supabase Google login, and every screen is backed by the API (`src/lib/api.ts`).
+  - Public pages: Landing `/`, `/login`, `/plans`, and the legal pages `/privacy`, `/terms`, `/refunds`, `/cookies`, `/data-deletion`.
+  - Protected pages: `/onboarding`, `/dashboard`, `/connect`, `/processes/new`, `/processes/:id`.
+  - Pastel "Lavender garden" design system, GSAP animation, cookie consent banner, self-hosted fonts.
+- **Credentials:** `.env` files are gitignored and don't travel through git. The desktop working copy has real credentials; any other checkout, including cloud sessions, starts blank, and `npm run dev` names what's missing. There are no `.env.example` templates, deliberately; [backend/README.md](backend/README.md) lists every variable.
+- **Not built:**
+  - Checkout and the payment-provider webhook (Lemon Squeezy vs Paddle undecided). Until they exist, plans and credits are set by hand with the SQL helpers in backend/README.md.
+  - The document pipeline.
+  - `helmet`/rate limiting.
+- **Schema:** production has `0001`, `0002` and `0003` all applied. Any new migration must be run by hand in the Supabase SQL editor *before* deploying code that depends on it; nothing applies migrations automatically.
+- **Production:** deployed from `production`. The frontend is on Vercel at `drivetag-ai.com` and the backend on DigitalOcean at `api.drivetag-ai.com`. Open items:
+  - The Namecheap DNS fix: the `@` record's HTTPS proxy toggle, and the `www` CNAME.
+  - Google domain verification. Until it's done, Drive webhooks can't be registered, and sorting runs on the polling fallback (`AUTO_SYNC_INTERVAL_SECONDS` > 0).
 
 ## Tech Stack & Hosting
 
@@ -33,11 +40,11 @@ Other docs: [task.md](task.md) (scope checklist), [ForDev.md](ForDev.md) (setup 
     - `frontend/vercel.json` rewrites every path to `index.html`; without it every client route 404s on Vercel.
     - `vite build` refuses to run unless `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and `VITE_API_URL` are set. They're baked in at build time, so changing them on Vercel needs a redeploy.
     - Supabase auth uses the PKCE flow (`src/lib/supabase.ts`).
-  - **Styling:** design tokens live in `src/index.css` `@theme` (`canvas`, `ink`, `lavender`, `periwinkle`, `butter`, `sage`, `rose` + `-soft` tints). Use those rather than raw Tailwind palette colors. Fonts: Fredoka (headings) and Nunito (body).
+  - **Styling:** design tokens live in `src/index.css` `@theme` (`canvas`, `ink`, `lavender`, `periwinkle`, `butter`, `sage`, `rose` + `-soft` tints). Use those rather than raw Tailwind palette colors. Fonts: Fredoka (headings) and Nunito (body), self-hosted via `@fontsource-variable/*` imported in `main.tsx` — never add a Google Fonts `<link>` (GDPR: it sends every visitor's IP to Google).
   - **Animation:** GSAP. Import it from `src/lib/gsap.ts`, which registers plugins once — not from `gsap` directly. Use `useGSAP`, and gate motion behind `gsap.matchMedia()` with `MOTION_OK` / `REDUCED_MOTION`. Project GSAP skills live in `.claude/skills/`.
 - **Backend:** Node.js + Express 5 (ESM). Hosted on DigitalOcean App Platform (Source Directory: `/backend`) at `api.drivetag-ai.com`. Must run with `NODE_ENV=production` there, which locks CORS and turns on in-process channel renewal. At boot it logs `"Production config problem"` for any localhost or placeholder URL env var.
 - **Database & Auth:** Supabase (PostgreSQL), project `ckskwjtjydaqewwojsfj` — Google login for identity, plus all app tables.
-- **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON. Default model `gemini-3.6-flash` — Google retired `gemini-2.5-flash` for new users, and a stale `GEMINI_MODEL` in a local `.env` overrides the default.
+- **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON. Default model `gemini-3.6-flash` — Google retired `gemini-2.5-flash` for new users, and a stale `GEMINI_MODEL` in a local `.env` overrides the default. The API key's project must have billing enabled: on the free tier Google may use submitted images to improve its products, which the Privacy Policy rules out. User-facing text never names the vendor or model ("advanced AI"); only the Privacy Policy names Google LLC as the AI processor.
 - **Google Drive:** `googleapis` SDK.
 - **Payments:** Lemon Squeezy or Paddle (Merchant of Record). *Not integrated yet.*
 
@@ -60,7 +67,7 @@ backend/
 │   │   ├── drive.routes.js         folder browser/create, watch lifecycle, legacy single-folder endpoints
 │   │   ├── processes.routes.js     work process CRUD, status, per-process Organize now
 │   │   ├── plans.routes.js         public GET /api/plans
-│   │   └── account.routes.js       /api/me, /api/activity
+│   │   └── account.routes.js       /api/me (GET, and DELETE = delete account), /api/activity
 │   ├── services/
 │   │   ├── googleAuth.service.js   OAuth client, consent URL, token exchange
 │   │   ├── drive.service.js        file bytes, rename/move, changes feed, folder browse/create
@@ -69,7 +76,8 @@ backend/
 │   │   ├── gemini.service.js       per-process prompt + schema → {subject, style, genre, fields, destination}
 │   │   ├── entitlement.service.js  effective plan, remaining credits, which processes are locked
 │   │   ├── processes.service.js    process validation, folder checks, create-in-Master folders
-│   │   ├── pipeline.service.js     Loop B sweeps, Organize now, per-process Raw folder status
+│   │   ├── pipeline.service.js     Loop B sweeps, Organize now, per-process AI worker pools, Raw folder status
+│   │   ├── account.service.js      account deletion (disconnect Drive, drop pending grants, delete the auth user)
 │   │   └── autoSync.service.js     polling fallback for channels Google won't push to
 │   ├── repositories/          one module per table or SQL function group, all Supabase access
 │   └── utils/                 logger (redacting), crypto (AES-GCM + HMAC state), filename (templates), fileDate,
@@ -78,31 +86,36 @@ backend/
     ├── test-gemini.js         standalone Gemini probe
     ├── renew-channels.js      cron entrypoint for channel renewal
     └── get-token.js           mint a Supabase access token for curl testing
+backend/test/                  node:test suites with mocked collaborators (pipeline workers, account deletion)
 
 frontend/vercel.json           SPA rewrite (all paths → index.html)
 frontend/src/
-├── App.tsx                    routes: /, /login, /plans (public); /onboarding, /dashboard, /connect, /processes/new, /processes/:id
+├── App.tsx                    routes (public + legal + protected), app-wide SiteFooter
 ├── index.css                  Tailwind @theme design tokens
 ├── contexts/AuthContext.tsx   Supabase session + Google sign-in
 ├── components/
 │   ├── ProtectedRoute.tsx
-│   ├── RouteAnalytics.tsx     Vercel Analytics + URL redaction
+│   ├── RouteAnalytics.tsx     consent-gated Vercel Analytics + URL redaction; mounts CookieConsent
+│   ├── CookieConsent.tsx      the cookie banner (two equal choices, reopened from the footer)
+│   ├── SiteFooter.tsx         legal links, "Cookie settings", support email
 │   ├── TagFlowIllustration.tsx, MemoryDemo.tsx   animated marketing illustrations
-│   ├── ui/                    Button, Card, Modal, ConfirmDialog, TextField/TextArea, Switch, SegmentedControl,
+│   ├── ui/                    Button, Card, Modal, ConfirmDialog, TextField/TextArea, Switch,
 │   │                          ProgressBar, Logo, Skeleton, AnimatedNumber, BlobBackground
 │   ├── drive/                 FolderBrowser (breadcrumbs, search, new folder), FolderPickerField
 │   ├── processes/             ProcessForm + destination, naming, tag field and instruction editors
-│   ├── billing/               UsageMeter, PlanGrid/PlanCard, TopupPacks
-│   └── dashboard/             useDashboardData polling + the dashboard's cards
+│   ├── billing/               PlanGrid/PlanCard, TopupPacks, DocumentPricing (preview), TransparencyNote, UsageMeter
+│   └── dashboard/             useDashboardData polling + the dashboard's cards (incl. AccountCard: delete account)
 ├── hooks/                     usePressMotion, useReveal, usePlans
 ├── lib/
 │   ├── supabase.ts            anon-key client
 │   ├── api.ts                 typed backend client (Bearer token, readable network/CORS errors, field-level error details)
 │   ├── filename.ts            naming-template mirror of backend/src/utils/filename.js for the live preview
+│   ├── consent.ts             analytics consent storage + the events the banner and footer use
 │   ├── format.ts, messages.ts
 │   ├── gsap.ts                plugin registration + reduced-motion queries
 │   └── confetti.ts
-└── pages/                     Landing, Login, Plans, Onboarding, Connect, Dashboard, ProcessEditor
+└── pages/                     Landing, Login, Plans, Onboarding, Connect, Dashboard, ProcessEditor;
+                               legal/ Privacy, Terms, Refunds, Cookies, DataDeletion (+ LegalPage layout)
 
 supabase/migrations/           0001_init.sql, 0002_work_processes.sql, 0003_cleanup.sql (source of truth), at the repo root
 tests/filename-vectors.json    shared naming-template vectors both filename implementations must pass
@@ -149,14 +162,27 @@ These were deliberate and are easy to "fix" wrongly:
 - **Credits are charged on success only, atomically.**
   - The SQL function `complete_processed_file` does three things in one transaction: re-checks the `claimed_at` fence, charges one credit (free → monthly → top-up → `overage`), and marks the file completed.
   - Failed files are never charged, so there are no refunds, and a taken-over claim can't be charged twice.
-  - The sweep reads remaining credits once and counts down. Deploy overlap is the only thing that produces `overage`.
+  - A run reads remaining credits once. Each file **reserves** one before its first `await`, and the reservation is released on every outcome that wasn't charged (skipped, claim lost, failed), so concurrent workers can never dispatch more files than there are credits. Deploy overlap is the only thing that produces `overage`.
+- **Several AI workers per process, one run per user.**
+  - The per-user single slot (`inFlight`) still allows one sweep or "Organize now" at a time.
+  - Inside a run, each process gets a manager (`runProcessQueue`). It de-duplicates files by id and runs them through a pool of `plan.aiPerProcess` workers.
+  - Different processes run concurrently.
+  - A server-wide FIFO semaphore (`MAX_CONCURRENT_AI_JOBS`, default 20) bounds simultaneous download+classify steps. It exists for memory, since each step holds an image buffer, and for the AI rate limit. It isn't fair across users (ponytail-noted).
+  - The DB claim stays the duplicate guard.
+  - `complete_processed_file` locks the subscription row `FOR UPDATE`, so concurrent charges can't lose an increment.
+  - Live counts reach the dashboard as `workers` in `GET /api/processes/status`.
+- **The AI call is tuned for cost** (`COST_CONFIG` in `gemini.service.js`: medium media resolution, low thinking).
+  - Measured on 2026-09-19: about 3× cheaper than the defaults, which spend ~420 billed thinking tokens per image, and 2× faster, with the same routing on the test images.
+  - Google's price for the model doubles on 2027-01-01, and without this config Enterprise would run at a loss.
+  - Transient 429/500/503 errors are retried by the SDK (`httpOptions.retryOptions`).
+  - Errors stored for users are vendor-neutral.
 - **Plan limits live only in `backend/src/config/plans.js`.** They're passed into the SQL functions as arguments; don't hard-code them in SQL or the frontend. The frontend reads them from `GET /api/plans`.
 - **Out of credits, or no active processes → the page token is fast-forwarded** (`getStartPageToken`) instead of listing changes. Images that arrived meanwhile wait in Raw for "Organize now". Holding the token instead would make every later Drive change re-read an ever-growing backlog.
 - **A notification that arrives mid-sweep isn't dropped.** It sets `rerunRequested`, and one more sweep runs with the channel re-read once the user's slot frees up.
 - **Multi-table writes go through SQL functions.** PostgREST has no transactions, so `save_work_process` saves a process and its destination list in one call. It enforces the process limit under a per-user advisory lock.
 - **The naming template renderer exists twice.** `backend/src/utils/filename.js` names real files; `frontend/src/lib/filename.ts` renders the editor's live preview. Both must pass `tests/filename-vectors.json` — change them together. An empty token removes the separator next to it, so `{a}_{b}_{c}` without `{b}` gives `a_c`.
 - **Gemini gets fixed rules in `systemInstruction`, and owner settings as labelled JSON data.** Destinations are an enum of slugged keys plus `unsorted`, decided after the descriptive fields. Unknown keys fall back to Unsorted, and text inside an image is treated as image content.
-- **Legacy single-folder support is transitional.** Until the cleanup release, `/api/drive/config`, `/raw-status`, `/organize` and `/api/me`'s `config`/`subscription`/`entitled` fields remain, so an open tab of the previous frontend keeps working. The `sync_legacy_folder_config` trigger mirrors `folder_configs` writes into the user's first process. `0003_cleanup.sql` removes the trigger and the table.
+- **Legacy single-folder support is transitional.** `/api/drive/config`, `/raw-status`, `/organize` and `/api/me`'s `config`/`subscription`/`entitled` fields remain as shims mapped onto the user's first work process; they never touch `folder_configs`. Production has already run `0003_cleanup.sql`, which dropped `folder_configs`, its sync trigger, the `trialing` status and `trial_ends_at`. So the remaining cleanup is code only: delete the shims.
 - **Routers that must be public mount before `accountRouter`** in `app.js`. Its `router.use(requireAuth)` runs for every `/api/*` request that reaches it.
 - **Expected errors use `utils/httpError.js`.** `errorHandler` shows `error`, `code` and `details` only for errors marked `expose` (HttpError, malformed JSON), including in production. Anything else becomes "Internal server error".
 - **Drive-connect returns to the origin that started it.** `POST /api/auth/google/start` signs the request's `Origin` into the OAuth `state`, provided `utils/origins.js` allows it, and the callback redirects there. Dev CORS allows any `localhost` port; production uses `CORS_ORIGINS` only, so `NODE_ENV=production` must be set when deployed.
@@ -166,11 +192,24 @@ These were deliberate and are easy to "fix" wrongly:
   - The in-memory store assumes one backend instance. A restart mid-connect just means "try again".
 - **The webhook acks before processing.** Google retries on non-2xx and expects a fast response, so the sweep runs in `setImmediate` after `res.sendStatus(200)`.
 - **The plan gate fails closed** and is checked before any Gemini spend. A user with no `subscriptions` row gets no processing. A Free row is created on first Drive connect (`ensureSubscription`). A paid plan only counts while `active` or `past_due`; otherwise Free limits apply.
+- **Analytics is consent-gated.** `<Analytics>` mounts only after the visitor clicks "Allow analytics" in the cookie banner (`lib/consent.ts`, key `drivetag-analytics-consent-v1`).
+  - The Vercel script never un-registers its `beforeSend`, so revoking takes effect through `beforeSend` reading consent live and returning `null`.
+  - The banner's two choices must stay equal-weight. There's no pre-ticked option and no close button that means "accept".
+  - Anything new stored in the browser must be added to the Cookie Policy (`pages/legal/Cookies.tsx`).
+- **Account deletion** (`DELETE /api/me`, body `{ "confirm": "DELETE" }`):
+  - It refuses with 409 `sorting_in_progress` while the user's run is in flight.
+  - Then it runs `disconnectDrive`. A failure there is logged and doesn't block deletion.
+  - It drops any parked Drive-connect grant, then deletes the Supabase auth user. Every user table cascades from `auth.users`.
+  - Files in Drive are never touched.
+  - The frontend signs out locally even if the server-side sign-out fails, because the account is already gone.
+- **Legal pages are code, and must match the code.** `/privacy`, `/terms`, `/refunds`, `/cookies` and `/data-deletion` describe exactly what the backend stores and does, including Google's required Limited Use sentence.
+  - Change them when data handling, providers, storage keys or refund terms change.
+  - The Google OAuth consent screen links to `/privacy` and `/terms`.
 - **Vercel Analytics gets explicit `route`/`path` props and a `beforeSend` redactor** (`frontend/src/components/RouteAnalytics.tsx`). The script's auto-tracking only hooks `history.pushState`, so `<Navigate replace />` redirects — including login → dashboard — went uncounted. The redactor strips the hash and every query param except `utm_*`, because OAuth returns put Supabase tokens and `code`/`state` in the URL. Don't swap it for a bare `<Analytics />`. In dev, StrictMode logs the first view twice; production sends one.
-- **Full `drive` scope is required**, not `drive.file` — the app must read files other people drop in the folder. This makes the app subject to Google restricted-scope verification; see the warning in ForDev.md.
+- **Full `drive` scope is required**, not `drive.file` — the app must read files other people drop in the folder. This makes the app subject to Google restricted-scope verification and an annual CASA security assessment; see backend/README.md.
 - **The frontend dev server uses `strictPort` on 5173.** Supabase's redirect allowlist names that origin, and silently drifting to 5174 used to break every API call with a bare "Failed to fetch". Dev CORS now tolerates other localhost ports too, but keep `strictPort` so there's one canonical dev origin.
 - **`@gsap/react` doesn't revert between dependency changes by default.** Pass `revertOnUpdate: true` to `useGSAP` whenever a dependency-driven effect starts looping or stateful animations, or they stack up.
-- **The Drive webhook needs a Google-verified domain.** Drive refuses to register a watch on an address whose domain isn't verified in the Cloud project, so free ngrok URLs and `*.ondigitalocean.app` can't receive notifications. Production is planned as `api.drivetag-ai.com`.
+- **The Drive webhook needs a Google-verified domain.** Drive refuses to register a watch on an address whose domain isn't verified in the Cloud project, so free ngrok URLs and `*.ondigitalocean.app` can't receive notifications. Production uses `api.drivetag-ai.com`. It needs `drivetag-ai.com` verified in Search Console, with a TXT record on host `@`, before watches can switch from polling to webhooks.
 
 ## Commands
 
@@ -180,6 +219,7 @@ All commands run from `backend/`:
 npm install                    # install dependencies
 npm run dev                    # start with nodemon (auto-reload)
 npm start                      # start without auto-reload
+npm test                       # node:test suites in test/ (mocked; no .env, network or AI calls needed)
 npm run test:gemini [path] [--process spec.json]   # classify a local image with a process's destinations/tags, print the result + filename
 npm run renew:channels         # renew expiring Drive watch channels now (production also does this hourly in-process)
 npm run token -- <email> <pw>  # mint a Supabase access token for curling the authed routes
@@ -187,7 +227,7 @@ npm run token -- <email> <pw>  # mint a Supabase access token for curling the au
 
 From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && vite build`), `npm run lint` (oxlint), `npm run preview` (serve the production build). `.claude/launch.json` defines the dev server and production preview as preview-server configs.
 
-`npm run test:gemini` and `npm run token` need only their own vars; the server needs the full `backend/.env` and refuses to boot, naming the missing variables, when it's incomplete. The variable list lives in [tutorial.md](tutorial.md). There is no automated test suite — verification so far is manual probes, curl against a running server, and browser checks.
+`npm run test:gemini` and `npm run token` need only their own vars; the server needs the full `backend/.env` and refuses to boot, naming the missing variables, when it's incomplete. The variable list lives in [backend/README.md](backend/README.md). `npm test` covers the worker manager (concurrency caps, de-duplication, credit reservation, fast-forward) and account deletion. Everything else is verified with manual probes, curl and browser checks. Name new test files `*.test.js` under `backend/test/`; the script is scoped there so it never picks up `scripts/test-gemini.js`, which makes a real, billed AI call.
 
 ## API surface
 
@@ -208,6 +248,7 @@ From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && v
 | GET/PUT/PATCH/DELETE | `/api/processes/:id` | Bearer |
 | POST | `/api/processes/:id/organize` | Bearer |
 | GET | `/api/me` | Bearer |
+| DELETE | `/api/me` (body `{ "confirm": "DELETE" }`) — delete account | Bearer |
 | GET | `/api/activity` (`?processId`) | Bearer |
 | GET/POST | `/api/drive/config` — legacy, removed in the cleanup release | Bearer |
 | GET / POST | `/api/drive/raw-status` / `/api/drive/organize` — legacy, all processes | Bearer |
@@ -219,4 +260,6 @@ From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && v
 - Log with `utils/logger.js` (structured JSON, auto-redacts token/secret/key fields) rather than `console.log`. Never log image bytes.
 - Repositories throw on Supabase errors with a contextual message; routes let Express 5 forward rejections to `errorHandler`.
 - Never paste or commit credentials. `.env` files are gitignored; production values go in DigitalOcean/Vercel encrypted env settings.
-- `.claude/skills/gsap-*` are third-party files pinned by `skills-lock.json` — update with `npx skills update`, don't hand-edit.
+- `.claude/skills/gsap-*` are third-party files pinned by `skills-lock.json`. Update them with `npx skills update` rather than hand-editing.
+  - The current CLI installs into an untracked `.agents/skills/` and turns each `.claude/skills/gsap-*` into a symlink. Git on this Windows machine has `core.symlinks=false`, so that layout doesn't commit cleanly.
+  - If `git status` then shows no content change, restore the committed layout: remove the symlinks, run `git checkout -- .claude/skills skills-lock.json`, and delete `.agents/`. The 2026-09-19 update was content-identical.

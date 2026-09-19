@@ -1,6 +1,6 @@
 -- DriveTag AI — 0002: AI work processes, plans and image usage
 -- Run in the Supabase SQL Editor AFTER 0001 and BEFORE deploying the backend
--- that uses it (see ForDev.md). Safe to re-run: schema changes are idempotent,
+-- that uses it (see backend/README.md). Safe to re-run: schema changes are idempotent,
 -- and the one-time data backfill at the bottom only runs on first application.
 --
 -- Additive on purpose: the previously deployed backend keeps working against

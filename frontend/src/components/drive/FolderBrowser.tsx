@@ -138,7 +138,7 @@ function FolderRow({ folder, reason, selected, isNew, onOpen, onSelect }: Folder
             className={`relative z-10 inline-flex shrink-0 items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${FOCUS_RING} ${
               selected
                 ? 'border-transparent bg-lavender text-ink'
-                : 'border-line bg-white text-ink hover:border-lavender hover:bg-lavender-soft'
+                : 'border-ink-soft/80 bg-white text-ink hover:border-lavender hover:bg-lavender-soft'
             }`}
           >
             {selected && <Check aria-hidden className="h-3.5 w-3.5" strokeWidth={3} />}
@@ -556,7 +556,7 @@ export function FolderBrowser({ selectedId = null, onSelect, disabledFolders, st
           spellCheck={false}
           enterKeyHint="search"
           aria-controls={listId}
-          className="w-full rounded-2xl border border-line bg-canvas py-3 pl-11 pr-11 text-sm font-semibold text-ink placeholder:font-normal placeholder:text-ink-soft focus:border-lavender focus:outline-none focus:ring-4 focus:ring-lavender/40"
+          className="w-full rounded-2xl border border-ink-soft/80 bg-canvas py-3 pl-11 pr-11 text-sm font-semibold text-ink placeholder:font-normal placeholder:text-ink-soft focus:border-lavender focus:outline-none focus:ring-4 focus:ring-lavender/40"
         />
         {query && (
           <button
@@ -752,7 +752,7 @@ export function FolderBrowser({ selectedId = null, onSelect, disabledFolders, st
               <Button onClick={() => void createFolder()} disabled={createBusy} className="flex-1 sm:flex-none">
                 {createBusy ? (
                   <>
-                    <LoaderCircle aria-hidden className="h-4 w-4 animate-spin" /> Creating…
+                    <LoaderCircle aria-hidden className="h-4 w-4 animate-spin motion-reduce:animate-none" /> Creating…
                   </>
                 ) : (
                   <>
@@ -843,7 +843,7 @@ export function FolderBrowser({ selectedId = null, onSelect, disabledFolders, st
                   >
                     {loadingMore ? (
                       <>
-                        <LoaderCircle aria-hidden className="h-4 w-4 animate-spin" /> Loading more…
+                        <LoaderCircle aria-hidden className="h-4 w-4 animate-spin motion-reduce:animate-none" /> Loading more…
                       </>
                     ) : loadMoreError ? (
                       <>

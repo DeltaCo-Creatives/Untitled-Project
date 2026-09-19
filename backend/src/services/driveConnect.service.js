@@ -65,3 +65,21 @@ export async function claimGrant(pendingId, userId) {
   await ensureSubscription(userId);
   logger.info("Drive connected", { userId });
 }
+
+/**
+ * Revokes and drops any grant parked for this user but never claimed — e.g. the
+ * account was deleted in the few minutes between starting Connect Drive and
+ * finishing Google's consent screen. Never throws: a stuck revoke at Google
+ * must not block account deletion, and the entry is dropped either way.
+ */
+export async function dropPendingGrantsForUser(userId) {
+  for (const [id, entry] of pending) {
+    if (entry.userId !== userId) continue;
+    pending.delete(id);
+    try {
+      await revokeRefreshToken(decrypt(entry.sealedToken));
+    } catch (err) {
+      logger.warn("Could not revoke a pending Drive grant during account deletion", { userId, reason: err.message });
+    }
+  }
+}

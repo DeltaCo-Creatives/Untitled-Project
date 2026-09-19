@@ -164,6 +164,7 @@ export function ProcessesSection({
                 organizing={organizing}
                 busyElsewhere={!organizing && slotBusy}
                 progress={organizing ? organizeProgress(runs[process.id], entry) : null}
+                workers={status?.workers?.[process.id] ?? 0}
                 onOrganizeStarted={onOrganizeStarted}
                 onProcessChanged={onProcessChanged}
                 onReload={onReload}

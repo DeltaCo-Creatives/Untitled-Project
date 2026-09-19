@@ -94,8 +94,8 @@ export function FolderPickerField({
         aria-describedby={error || hint ? messageId : undefined}
         className={`group flex min-h-[3.25rem] w-full min-w-0 items-center gap-3 rounded-2xl border bg-canvas py-2 pl-2 pr-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-4 disabled:cursor-not-allowed disabled:opacity-60 ${
           error
-            ? 'border-rose focus-visible:ring-rose/40'
-            : 'border-line hover:border-lavender focus-visible:border-lavender focus-visible:ring-lavender/40'
+            ? 'border-rose-ink/60 focus-visible:ring-rose/40'
+            : 'border-ink-soft/80 hover:border-lavender focus-visible:border-lavender focus-visible:ring-lavender/40'
         }`}
       >
         {value ? (

@@ -4,6 +4,7 @@ import { CircleAlert, Info, LogOut, PlugZap, RefreshCw, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { gsap, useGSAP, SplitText, MOTION_OK } from '../lib/gsap';
 import { plural } from '../lib/format';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { Button, ButtonLink } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -13,9 +14,11 @@ import { UsageCard } from '../components/dashboard/UsageCard';
 import { ProcessesSection } from '../components/dashboard/ProcessesSection';
 import { StatsCard } from '../components/dashboard/StatsCard';
 import { ConnectionCard } from '../components/dashboard/ConnectionCard';
+import { AccountCard } from '../components/dashboard/AccountCard';
 import { ActivityList } from '../components/dashboard/ActivityList';
 
 export default function Dashboard() {
+  useDocumentTitle('Dashboard');
   const { user, signOut } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -200,7 +203,7 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:py-12">
+      <main id="main-content" className="mx-auto max-w-6xl px-4 py-8 sm:py-12">
         {view === 'loading' ? (
           <div className="space-y-6" role="status" aria-label="Loading your dashboard">
             <Skeleton className="h-10 w-64 max-w-full" />
@@ -258,7 +261,7 @@ export default function Dashboard() {
                   type="button"
                   onClick={() => setNotice(null)}
                   aria-label="Dismiss"
-                  className="rounded-lg p-0.5 text-ink-soft hover:bg-butter hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60"
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-ink-soft hover:bg-butter hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -319,7 +322,10 @@ export default function Dashboard() {
 
                   <div className="grid gap-6 lg:grid-cols-3">
                     <StatsCard activity={activity} className="dash-item lg:col-span-2" />
-                    <ConnectionCard onDisconnected={reload} className="dash-item" />
+                    <div className="flex flex-col gap-6">
+                      <ConnectionCard onDisconnected={reload} className="dash-item" />
+                      <AccountCard className="dash-item" />
+                    </div>
                   </div>
 
                   <ActivityList activity={activity} processes={processes} live={live} className="dash-item" />

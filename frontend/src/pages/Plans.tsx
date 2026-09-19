@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
@@ -20,12 +21,15 @@ import { formatCount, plural } from '../lib/format';
 import { gsap, useGSAP, ScrollTrigger, SplitText, MOTION_OK } from '../lib/gsap';
 import { usePlans } from '../hooks/usePlans';
 import { useReveal } from '../hooks/useReveal';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { Button, ButtonLink } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
 import { PlanGrid } from '../components/billing/PlanGrid';
 import { TopupPacks } from '../components/billing/TopupPacks';
 import { UsageMeter } from '../components/billing/UsageMeter';
+import { TransparencyNote } from '../components/billing/TransparencyNote';
+import { DocumentPricingSection } from '../components/billing/DocumentPricing';
 import { freeImageAllowance } from '../components/billing/planFeatures';
 
 interface FaqItem {
@@ -68,9 +72,22 @@ function faqItems(freeImages: number): FaqItem[] {
 }
 
 export default function Plans() {
+  useDocumentTitle('Plans & pricing');
   const { user } = useAuth();
   const { plans, loading, error, retry } = usePlans();
   const pageRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+
+  // Jumping here from elsewhere (e.g. Landing's "See document plans" link) lands on a hash the router doesn't
+  // scroll to itself, and the target section only exists once plans have loaded.
+  useEffect(() => {
+    if (!location.hash || !plans) return;
+    const id = location.hash.slice(1);
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [location.hash, plans]);
 
   const [me, setMe] = useState<MeResponse | null>(null);
   // Keyed by user so a failure for one session doesn't hide the usage card after switching accounts.
@@ -177,7 +194,7 @@ export default function Plans() {
         </div>
       </header>
 
-      <main>
+      <main id="main-content">
         {/* Hero */}
         <section className="mx-auto max-w-3xl px-4 pb-12 pt-12 text-center sm:pt-16">
           <p className="plans-badge mb-6 inline-flex items-center gap-2 rounded-full border border-line bg-white px-4 py-1.5 text-xs font-bold shadow-soft">
@@ -203,6 +220,17 @@ export default function Plans() {
             Your first {formatCount(freeImages)} images are free, with no credit card and no time limit. Sorting for more
             clients? Add work processes and a fresh image allowance every month.
           </p>
+          {plans && (
+            <nav aria-label="Jump to pricing section" className="plans-sub mt-6 flex items-center justify-center gap-2 text-sm font-bold text-ink-soft">
+              <a href="#plans-heading" className="rounded-lg px-2 py-1 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
+                Images
+              </a>
+              <span aria-hidden>·</span>
+              <a href="#documents" className="rounded-lg px-2 py-1 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
+                Documents
+              </a>
+            </nav>
+          )}
         </section>
 
         {/* Signed-in usage */}
@@ -300,7 +328,15 @@ export default function Plans() {
               </Button>
             </div>
           ) : (
-            <PlanGrid plans={plans.plans} currentPlanId={currentPlanId} signedIn={Boolean(user)} />
+            <>
+              <PlanGrid
+                plans={plans.plans}
+                currency={plans.currency}
+                currentPlanId={currentPlanId}
+                signedIn={Boolean(user)}
+              />
+              <TransparencyNote currency={plans.currency} className="mt-12" />
+            </>
           )}
         </section>
 
@@ -308,7 +344,7 @@ export default function Plans() {
         {plans && plans.topupPacks.length > 0 && (
           <section aria-labelledby="packs-heading" className="mx-auto max-w-5xl px-4 pb-20">
             <div className="mb-10 text-center">
-              <p data-reveal className="mb-3 text-sm font-extrabold uppercase tracking-widest text-lavender-deep">
+              <p data-reveal className="mb-3 text-sm font-extrabold uppercase tracking-widest text-ink-soft">
                 Image packs
               </p>
               <h2 data-reveal id="packs-heading" className="mb-4 text-3xl font-bold tracking-tight sm:text-4xl">
@@ -318,8 +354,17 @@ export default function Plans() {
                 Packs top up any plan, Free included. They never expire and only kick in once your plan’s allowance runs out.
               </p>
             </div>
-            <TopupPacks packs={plans.topupPacks} />
+            <TopupPacks packs={plans.topupPacks} currency={plans.currency} />
           </section>
+        )}
+
+        {/* Documents */}
+        {plans && (
+          <DocumentPricingSection
+            documents={plans.documents}
+            currency={plans.currency}
+            imagePlans={plans.plans}
+          />
         )}
 
         {/* FAQ */}

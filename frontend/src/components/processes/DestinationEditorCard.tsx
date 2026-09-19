@@ -43,7 +43,7 @@ function FolderOption({ groupName, value, checked, disabled, icon: Icon, label, 
   return (
     <label
       className={`relative flex min-w-0 items-start gap-3 rounded-2xl border px-3.5 py-3 text-sm transition-colors has-[input:focus-visible]:ring-4 has-[input:focus-visible]:ring-lavender/60 ${
-        checked ? 'border-lavender bg-lavender-soft' : 'border-line bg-white hover:border-lavender'
+        checked ? 'border-lavender bg-lavender-soft' : 'border-ink-soft/80 bg-white hover:border-lavender'
       } ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
     >
       <input
@@ -58,7 +58,7 @@ function FolderOption({ groupName, value, checked, disabled, icon: Icon, label, 
       <span
         aria-hidden
         className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
-          checked ? 'border-lavender-deep bg-lavender-deep' : 'border-line bg-white'
+          checked ? 'border-lavender-deep bg-lavender-deep' : 'border-ink-soft/80 bg-white'
         }`}
       >
         {checked && <span data-radio-dot className="h-2 w-2 rounded-full bg-white" />}

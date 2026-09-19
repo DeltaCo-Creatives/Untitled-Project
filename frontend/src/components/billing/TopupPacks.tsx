@@ -3,7 +3,7 @@ import { Clock3, Package, PackageOpen, PackagePlus, type LucideIcon } from 'luci
 import type { TopupPack } from '../../lib/api';
 import { gsap, useGSAP, MOTION_OK } from '../../lib/gsap';
 import { Button } from '../ui/Button';
-import { PAYMENTS_PENDING_NOTE, packLabel } from './planFeatures';
+import { PAYMENTS_PENDING_NOTE, formatPrice, packLabel, perUnitPrice } from './planFeatures';
 
 const ACCENTS: { icon: LucideIcon; bubble: string }[] = [
   { icon: Package, bubble: 'bg-butter' },
@@ -13,10 +13,14 @@ const ACCENTS: { icon: LucideIcon; bubble: string }[] = [
 
 interface TopupPacksProps {
   packs: TopupPack[];
+  currency: string;
+  /** false while no payment provider is integrated: purchase buttons show "Coming soon" instead. */
+  /** What each unit in the pack is — "image" (default) or "document". */
+  unitLabel?: string;
   className?: string;
 }
 
-export function TopupPacks({ packs, className = '' }: TopupPacksProps) {
+export function TopupPacks({ packs, currency, unitLabel = 'image', className = '' }: TopupPacksProps) {
   const ref = useRef<HTMLUListElement>(null);
 
   useGSAP(
@@ -59,6 +63,7 @@ export function TopupPacks({ packs, className = '' }: TopupPacksProps) {
       {packs.map((pack, i) => {
         const accent = ACCENTS[i % ACCENTS.length];
         const Icon = accent.icon;
+        const unitPrice = perUnitPrice(pack.price, pack.images, unitLabel, currency);
         return (
           <li
             key={pack.id}
@@ -67,21 +72,22 @@ export function TopupPacks({ packs, className = '' }: TopupPacksProps) {
             <span className={`pack-icon mb-4 flex h-12 w-12 items-center justify-center rounded-2xl ${accent.bubble} shadow-soft`}>
               <Icon className="h-6 w-6 text-ink" aria-hidden />
             </span>
-            <h3 className="text-2xl font-semibold tracking-tight">{packLabel(pack)}</h3>
-            {pack.priceLabel && <p className="mt-1 font-display text-xl font-bold text-ink">{pack.priceLabel}</p>}
+            <h3 className="text-2xl font-semibold tracking-tight">{packLabel(pack, unitLabel)}</h3>
+            <p className="mt-1 font-display text-xl font-bold text-ink">{formatPrice(pack.price, currency)}</p>
+            {unitPrice && <p className="mt-0.5 text-xs font-bold text-ink-soft">{unitPrice}</p>}
             <p className="mb-6 mt-3 text-sm leading-relaxed text-ink-soft">Never expire · used after your plan’s allowance</p>
             <span className="mt-auto block" title={PAYMENTS_PENDING_NOTE}>
-              <Button
-                disabled
-                variant="secondary"
-                className="w-full"
-                title={PAYMENTS_PENDING_NOTE}
-                aria-label={`Buy ${packLabel(pack)}: coming soon`}
-              >
-                <Clock3 className="h-4 w-4" aria-hidden />
-                Coming soon
-              </Button>
-            </span>
+                <Button
+                  disabled
+                  variant="secondary"
+                  className="w-full"
+                  title={PAYMENTS_PENDING_NOTE}
+                  aria-label={`Buy ${packLabel(pack, unitLabel)}: coming soon`}
+                >
+                  <Clock3 className="h-4 w-4" aria-hidden />
+                  Coming soon
+                </Button>
+              </span>
           </li>
         );
       })}

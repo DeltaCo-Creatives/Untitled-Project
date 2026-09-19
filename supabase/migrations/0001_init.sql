@@ -1,5 +1,5 @@
 -- DriveTag AI — initial schema
--- Run in the Supabase SQL Editor (see ForDev.md). Safe to re-run.
+-- Run in the Supabase SQL Editor (see backend/README.md). Safe to re-run.
 --
 -- Security model: the backend uses the service_role key and bypasses RLS.
 -- The browser uses the anon key, so every table has RLS enabled and only

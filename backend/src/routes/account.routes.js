@@ -5,8 +5,10 @@ import { getChannelForUser, isPollingChannel } from "../repositories/driveChanne
 import { getRefreshToken } from "../repositories/credentials.repo.js";
 import { isStaleClaim, listRecent } from "../repositories/processedFile.repo.js";
 import { listForUser } from "../services/processes.service.js";
+import { deleteAccount } from "../services/account.service.js";
 import { isUuid } from "../utils/processValidation.js";
 import { serializeEntitlement, serializeLegacyFolderConfig } from "../utils/serialize.js";
+import { HttpError } from "../utils/httpError.js";
 
 const router = Router();
 
@@ -63,6 +65,17 @@ router.get("/activity", async (req, res) => {
       : row,
   );
   res.json({ activity });
+});
+
+/** Permanently deletes the signed-in user's DriveTag account and data. Guarded by a confirm phrase. */
+router.delete("/me", async (req, res) => {
+  if (req.body?.confirm !== "DELETE") {
+    throw new HttpError(400, 'Send { "confirm": "DELETE" } to permanently delete your account.', {
+      code: "confirm_required",
+    });
+  }
+  await deleteAccount(req.user.id);
+  res.json({ deleted: true });
 });
 
 export default router;

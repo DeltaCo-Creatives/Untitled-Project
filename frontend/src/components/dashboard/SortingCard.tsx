@@ -28,6 +28,7 @@ export function SortingCard({ me, status, latest, onChanged, className = '' }: S
   const { active, total } = me.processCounts;
   const canStart = active > 0;
   const syncing = Boolean(status?.syncing);
+  const busyWorkers = status?.workers ? Object.values(status.workers).reduce((sum, n) => sum + n, 0) : 0;
 
   const watchCopy: Record<WatchState, { title: string; detail: string | null }> = {
     live: {
@@ -153,7 +154,23 @@ export function SortingCard({ me, status, latest, onChanged, className = '' }: S
             {status?.kind === 'organize' ? 'Organizing now' : 'Sorting new images'}
           </span>
         )}
+        {busyWorkers > 0 && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-lavender-soft px-3 py-1 text-xs font-bold">
+            <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+            {plural(busyWorkers, 'AI', 'AI')} sorting
+          </span>
+        )}
       </div>
+      {/* Persistent (always-mounted) so screen readers reliably pick up polling updates — a live region added
+          to the DOM only once syncing starts isn't announced consistently. */}
+      <p className="sr-only" aria-live="polite">
+        {[
+          syncing ? (status?.kind === 'organize' ? 'Organizing now.' : 'Sorting new images.') : '',
+          busyWorkers > 0 ? `${plural(busyWorkers, 'AI worker', 'AI workers')} sorting.` : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      </p>
       <p className="mt-3 text-sm leading-relaxed text-ink-soft">
         One Google Drive watch covers all your work processes. Images dropped into the Raw folder of any process that’s
         switched on get tagged, renamed and filed.

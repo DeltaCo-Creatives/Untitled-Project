@@ -3,6 +3,7 @@ import { Link, Navigate } from 'react-router-dom';
 import { ArrowLeft, CircleAlert, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { gsap, useGSAP, MOTION_OK } from '../lib/gsap';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { Button } from '../components/ui/Button';
 import { TagFlowIllustration } from '../components/TagFlowIllustration';
@@ -19,6 +20,7 @@ function GoogleMark() {
 }
 
 export default function Login() {
+  useDocumentTitle('Log in');
   const { user, signInWithGoogle } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [redirecting, setRedirecting] = useState(false);
@@ -72,12 +74,12 @@ export default function Login() {
     <div ref={pageRef} className="min-h-screen">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
         <Logo />
-        <Link to="/" className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink">
+        <Link to="/" className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold text-ink-soft hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
           <ArrowLeft className="h-4 w-4" /> Back home
         </Link>
       </div>
 
-      <main className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-16 pt-6 lg:grid-cols-2 lg:pt-12">
+      <main id="main-content" className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-16 pt-6 lg:grid-cols-2 lg:pt-12">
         <div className="login-art hidden lg:block">
           <h2 className="mb-2 text-3xl font-bold tracking-tight">Drop. Tag. Sorted.</h2>
           <p className="mb-6 max-w-md text-ink-soft">This is what happens every time an image lands in your Raw folder.</p>
@@ -110,10 +112,21 @@ export default function Login() {
               <GoogleMark />
               {redirecting ? 'Opening Google…' : 'Continue with Google'}
             </Button>
+            <p className="mt-3 text-center text-xs leading-relaxed text-ink-soft">
+              By continuing, you agree to our{' '}
+              <Link to="/terms" className="font-semibold text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
+                Terms of Service
+              </Link>{' '}
+              and acknowledge our{' '}
+              <Link to="/privacy" className="font-semibold text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
+                Privacy Policy
+              </Link>
+              .
+            </p>
           </div>
 
           <p data-enter className="mt-6 text-center text-xs leading-relaxed text-ink-soft">
-            Zero-Retention: your images are processed in memory and never stored.
+            Zero-Retention: DriveTag processes your images in memory and never stores them.
           </p>
         </div>
       </main>

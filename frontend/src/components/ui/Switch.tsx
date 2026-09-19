@@ -58,7 +58,7 @@ export function Switch({ checked, onChange, label, disabled = false, busy = fals
         className={`absolute left-1 top-1 flex ${dims.knob} items-center justify-center rounded-full bg-white shadow-soft`}
       >
         {busy ? (
-          <LoaderCircle className={`${dims.icon} animate-spin`} />
+          <LoaderCircle className={`${dims.icon} animate-spin motion-reduce:animate-none`} />
         ) : checked ? (
           <Check className={dims.icon} strokeWidth={3} />
         ) : (
