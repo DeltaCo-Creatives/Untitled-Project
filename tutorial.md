@@ -8,12 +8,17 @@ How to obtain each value in `backend/.env` and `frontend/.env`, where it comes f
 2. `.env` files are gitignored and stay on your machine. Production values go in the hosting platform's encrypted env var settings, never in the repo.
 3. Anything named `VITE_*` **ships to the browser**. It is public by definition. Never put a secret there.
 
+**Last reconciled against the code:** 2026-09-19, at commit `3f4f554`.
+
 ## Quick reference
+
+The **Status** column describes a *fresh* `.env`: "You fill" means you must fetch the value from a service, "Pre-set"/"Pre-generated" means it's a code default or a random value you generate yourself (§5). It does **not** mean your checkout already has it — `.env` files are gitignored and never arrive with a clone.
 
 | Variable | Where it comes from | Secret? | Status |
 |---|---|---|---|
 | `GEMINI_API_KEY` | Google AI Studio | 🔴 Yes | You fill |
 | `GEMINI_MODEL` | Model ID string, not a credential. Code default `gemini-3.6-flash` | No | Optional (see §1) |
+| `MAX_IMAGE_BYTES` | Configuration. Ceiling on an image sent inline to Gemini; larger files are skipped rather than failing the request. Default 18 MB | No | Optional |
 | `GOOGLE_CLIENT_ID` | Google Cloud → Credentials | 🟡 Semi-public | You fill |
 | `GOOGLE_CLIENT_SECRET` | Google Cloud → Credentials | 🔴 Yes | You fill |
 | `GOOGLE_OAUTH_REDIRECT_URI` | You choose; must match Cloud config | No | ✅ Pre-set |

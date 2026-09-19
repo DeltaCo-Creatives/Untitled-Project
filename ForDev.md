@@ -2,7 +2,9 @@
 
 Everything you need to do by hand to get the backend running. Work top to bottom; each section ends with something you can verify.
 
-The backend code is fully built — nothing here asks you to write code. This is account setup, database creation, and secrets.
+Both the backend and the frontend are fully built — nothing in §1–§12 asks you to write code. This is account setup, database creation, and secrets. The only code still outstanding is listed in §13 and in [task.md](task.md).
+
+**Last reconciled against the code:** 2026-09-19, at commit `3f4f554`.
 
 For step-by-step help getting any single credential (and what to do if one leaks), see [tutorial.md](tutorial.md).
 
@@ -271,7 +273,7 @@ Plan limits (process count, free and monthly images, packs) live in `backend/src
 - That exact URL was then sent straight to Google's own authorize endpoint. An unregistered redirect URI gets bounced immediately with a `400 redirect_uri_mismatch` page — instead it proceeded into Google's normal sign-in flow, which only happens when the URI is actually registered on the OAuth client.
 - Supabase's Site URL save was confirmed via the dashboard's own success toast.
 
-"Sign in with Google" through Supabase now works end-to-end at the protocol level. (It still can't be exercised from the app itself until the frontend is wired to call it — §13 items 17–18.)
+"Sign in with Google" through Supabase now works end-to-end at the protocol level, and has since been completed for real from the app by more than one account.
 
 §3 authorized the *backend* to touch Drive. Logging **into the app** is a separate flow that Supabase runs, and it needs its own Google config.
 
@@ -340,13 +342,21 @@ Only `DRIVE_WEBHOOK_URL` is still a placeholder — it doesn't block booting (it
 
 Create `frontend/.env` by hand with the three variables below. The `.env.example` template this step used to copy was deleted in commit `0bdd63d`.
 
-All three are filled in: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (same values as backend's `SUPABASE_URL`/`SUPABASE_ANON_KEY`, §1), and `VITE_GOOGLE_CLIENT_ID` (same value as backend's `GOOGLE_CLIENT_ID`, §3 — never the client *secret*).
+```
+VITE_SUPABASE_URL=https://ckskwjtjydaqewwojsfj.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon key, §1>
+VITE_API_URL=http://localhost:3001
+```
+
+**All three are required — the build now fails without them.** `vite.config.ts` throws `Missing VITE_… for this build` rather than let a deploy silently ship the wrong API address, and a Vercel build (`VERCEL=1`) whose `VITE_API_URL` points at localhost fails too. `npm run dev` still falls back to `http://localhost:3001`.
 
 All `VITE_*` values ship to the browser and are meant to be public — never put `SUPABASE_SERVICE_ROLE_KEY` or `GOOGLE_CLIENT_SECRET` here.
 
+> `VITE_GOOGLE_CLIENT_ID` used to be listed here and **is no longer read** by the frontend — Google sign-in goes through Supabase's provider config. An old `.env` can drop it.
+
 > Note: `frontend/src/lib/supabase.ts` reads `VITE_SUPABASE_ANON_KEY` specifically. Supabase's dashboard now also offers a newer `sb_publishable_...` / `sb_secret_...` key format under a different variable name — the legacy `anon`/`service_role` JWT keys used throughout this repo still work identically and are what's wired in, so the client code wasn't changed.
 
-**Verify:** `cd frontend && npm run build` already confirmed working (fixed a `verbatimModuleSyntax` import error in `src/contexts/AuthContext.tsx` along the way — `ReactNode` needed `import type`). The build succeeds with `.env` empty; these vars only matter once the frontend is wired to call the backend (§13 items 17–18).
+**Verify:** `cd frontend && npm run build` confirmed passing on 2026-09-17 (a `verbatimModuleSyntax` import error in `src/contexts/AuthContext.tsx` was fixed along the way — `ReactNode` needed `import type`).
 
 ---
 
@@ -557,7 +567,9 @@ Things that were open questions and are now settled in code — change them deli
 
 ## 13. Remaining setup checklist
 
-Ordered by dependency — each step unblocks the next. Nothing here needs code written.
+Ordered by dependency — each step unblocks the next. Almost nothing here needs code written; the two exceptions are flagged.
+
+**Status key:** `[x]` done · `[~]` partly done · `[ ]` not started.
 
 **Already done — in the environment where setup was performed (see the note at the top)**
 - [x] `backend/` and `frontend/` dependencies installed (§0)
@@ -569,7 +581,7 @@ Ordered by dependency — each step unblocks the next. Nothing here needs code w
 - [x] Frontend `npm run lint` and `npm run build` verified passing (one real bug found and fixed: `AuthContext.tsx` needed `import type { ReactNode }`)
 - [x] Supabase Google-login wiring (§3b) — second redirect URI on the Google OAuth client, Supabase's Google provider, and the Site URL — all live-verified by hitting Supabase's and Google's real authorize endpoints, not just checked in the dashboards
 
-**Where this leaves you:** all setup that only needed pasting a key into `.env` or a config screen is done and verified. What's left needs either a real login (the consent-screen/test-user check, §13 item 8) or things only you can do: the Postgres password reset (below), and the ngrok/domain chain for live webhooks (§7, §7b). None of the code needs touching.
+**Where this leaves you:** all setup that only needed pasting a key into `.env` or a config screen is done and verified, and the frontend wiring that used to be listed here as unfinished is built. What's left is things only you can do in a dashboard: the Postgres password reset (below), the domain chain for live webhooks (§7b, [domainguide.md](domainguide.md)), and the production env vars. Two items further down do need code — rate limiting (item 24) and checkout (item 26).
 
 **Do first (5 min, security)**
 1. [ ] **Reset the Postgres database password** — Supabase → Project Settings → Database → Reset database password. You've now pasted it into chat twice; the app never uses the raw Postgres connection string (it talks to Supabase over the REST API with the service_role key), so this doesn't block anything below, but treat the password as burned and rotate it anyway.
@@ -584,7 +596,7 @@ Ordered by dependency — each step unblocks the next. Nothing here needs code w
 
 **Google OAuth (~45 min) — done except the one thing that needs a real login**
 7. [x] Cloud project + enable Drive API (§3) — client exists and works for the backend callback
-8. [ ] Consent screen: External, scope `.../auth/drive`, add yourself as a test user — the only unverified item in this section; can't be checked without actually completing a consent screen, which needs a live login (§8)
+8. [x] Consent screen: External, scope `.../auth/drive`, with yourself as a test user — confirmed by completing a real Google sign-in with more than one account. Every account that will connect Drive must be on that test-user list while the app is unverified
 9. [x] OAuth client (Web) with **both** redirect URIs — confirmed live, Google's own authorize endpoint accepts the Supabase callback URI
 10. [x] Client ID/secret into `backend/.env` **and** Supabase → Auth → Providers → Google — confirmed live via `/auth/v1/authorize?provider=google`
 11. [x] Supabase → Auth → URL Configuration: Site URL + redirect allowlist (§3b) — confirmed via dashboard save toast
@@ -595,17 +607,19 @@ Ordered by dependency — each step unblocks the next. Nothing here needs code w
 14. [ ] Authenticate ngrok (`ngrok config add-authtoken <token>` — CLI already installed) and tunnel a subdomain to localhost:3001 (ngrok paid or Cloudflare Tunnel) → `DRIVE_WEBHOOK_URL`
 15. [ ] Full loop test per §8: connect Drive, set folders, start watch, drop an image, check `/api/activity`
 
-**Frontend wiring (code, not setup)**
+**Frontend wiring — done (this was once the largest remaining build task)**
 16. [x] `frontend/.env` created and fully filled in (§6b)
-17. [ ] The frontend has no backend calls yet — no `VITE_API_URL`, no `fetch` to `/api/*`. Onboarding and dashboard screens render but do nothing, and login itself is mocked (`AuthContext.signInWithGoogle` fabricates a `dummy-token` user). This is the largest remaining build task.
-18. [ ] Add `VITE_API_URL`, send the Supabase access token as `Authorization: Bearer`, and wire: connect-Drive, folder pickers, watch toggle, `/api/me`, `/api/activity`
+17. [x] Real login — `AuthContext.signInWithGoogle` calls `supabase.auth.signInWithOAuth({ provider: 'google' })` over the PKCE flow. The old `dummy-token` fabrication is gone
+18. [x] `VITE_API_URL` plus a typed API client (`src/lib/api.ts`) sending `Authorization: Bearer <supabase access token>`, with connect-Drive, the folder browser, the watch toggle, work processes, `/api/me` and `/api/activity` all wired
 
 **Production**
-19. [ ] Backend → DigitalOcean App Platform, Source Directory `/backend` (§11)
-20. [ ] Frontend → Vercel, Root Directory `frontend` (§11)
+19. [~] Backend → DigitalOcean App Platform, Source Directory `/backend` (§11). Deployed and serving `api.drivetag-ai.com`, but its env vars still held localhost values at the last check — [domainguide.md](domainguide.md) §6
+20. [~] Frontend → Vercel, Root Directory `frontend` (§11). The project exists and serves `drivetag-ai.com`, but the 2026-09-17 build failed on the missing `VITE_API_URL` — [domainguide.md](domainguide.md) §2b
 21. [ ] Production redirect URI + webhook URL; re-register every watch channel after the domain changes
-22. [ ] Schedule `npm run renew:channels` hourly (§9) — without this, tagging silently dies within days
-23. [ ] Privacy policy + terms on your domain
-24. [ ] Pick Lemon Squeezy or Paddle, then build checkout and the billing webhook (plans, limits, usage metering and the credit ledger already exist, see §2b)
+22. [x] Hourly channel renewal runs **inside** the production server when `NODE_ENV=production`, so no external cron is strictly required (§9)
+23. [ ] An external renewal schedule as a safety net — in-process renewal only runs while the single instance is up
+24. [ ] `helmet` + rate limiting on the public endpoints (neither is installed); exclude `/webhook/drive`, since Google bursts
+25. [ ] Privacy policy + terms on your domain
+26. [ ] Pick Lemon Squeezy or Paddle, then build checkout and the billing webhook (plans, limits, usage metering and the credit ledger already exist, see §2b)
 
 **Costs to expect:** domain ~$10–15/yr · ngrok paid ~$8/mo (or Cloudflare Tunnel free) · Supabase free tier fine to start · DigitalOcean App Platform ~$5/mo · Gemini Flash pay-per-use (the free tier's rate limits will throttle a real workload, so plan on enabling billing).

@@ -1,6 +1,8 @@
 # domainguide.md — Wiring up drivetag-ai.com
 
-> **Status (2026-09-17): deployed, but production login is broken until §2–§7 are finished.** Verified from outside:
+> **Status (last probed from outside 2026-09-17): deployed, but production login is broken until §2–§7 are finished.**
+>
+> Nothing below has been re-checked since — the 2026-09-19 documentation pass had no outbound network access. Re-run each section's own check before trusting a line here; several are one `curl` away.
 >
 > **Frontend (Vercel)**
 > - `https://drivetag-ai.com/` serves the latest build.

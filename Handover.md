@@ -1,25 +1,32 @@
 # Handover.md — DriveTag AI
 
-**Snapshot:** 2026-09-17 · `production` at `579932a` + **uncommitted "AI work processes, plans and usage" release** (⚠️ 0) · `staging` at `75abc96` · repo `github.com/DeltaCo-Creatives/Untitled-Project`
+**Snapshot:** 2026-09-19 · `production` at `3f4f554` ("Revised Business structure"), working tree clean · `production-vdsjba` identical to `production`, both matching their remotes · `staging` at `75abc96` · repo `github.com/DeltaCo-Creatives/Untitled-Project`
 
 The one-page answer to "what is true right now, and what do I do next". Read this first; it links out to the detailed docs. Update the snapshot line and the tables whenever the state changes.
 
+> **What changed on 2026-09-19.** Documentation-only pass: every `.md` was reconciled against the code. Two docs were badly out of date and were rewritten — [task.md](task.md) and [frontend/README.md](frontend/README.md) both still described the frontend as a UI shell with a mocked `dummy-token` login and no backend calls, which stopped being true several commits ago. **No code changed.**
+>
+> **Production could not be re-probed from this session** — outbound network egress is restricted here, so every external claim below still dates from 2026-09-17. Treat the deployment tables as "last known", not "current".
+
 ## TL;DR
 
-- **New, uncommitted: AI work processes + plans** (⚠️ 0). The feature is built and tested, but not deployed:
-  - Users create several processes. Each is a Raw folder → Master folder → destination folders the AI picks by description, plus Unsorted.
-  - Each process has its own naming template, custom tag fields and AI instructions.
-  - Plans: Free (1 process, 100 lifetime images), Creator (5, 1,000/mo), Studio (15, 5,000/mo), Enterprise (50, 25,000/mo, monthly only). Top-up image packs never expire.
-  - Payments aren't integrated. Plans and credits are set by hand with SQL helpers.
-  - **Rollout needs migration `0002` run in Supabase first.**
+- **AI work processes + plans are committed and pushed** (⚠️ 0) — this was listed as uncommitted in the previous snapshot. The code is on `production` at `3f4f554`. **Whether it has been rolled out is unverified:**
+  - Migration `0002` may or may not have been run in Supabase. It must go first.
+  - The 2026-09-17 Vercel build failed, so the live frontend may still be the old `75abc96` bundle.
+  - Check both before assuming this release is live.
+  - What it contains:
+    - Users create several processes. Each is a Raw folder → Master folder → destination folders the AI picks by description, plus Unsorted.
+    - Each process has its own naming template, custom tag fields and AI instructions.
+    - Plans: Free (1 process, 100 lifetime images), Creator (5, 1,000/mo), Studio (15, 5,000/mo), Enterprise (50, 25,000/mo, monthly only). Top-up image packs never expire.
+    - Payments aren't integrated. Plans and credits are set by hand with SQL helpers.
 - **Backend** — Drive OAuth, the webhook/polling → Gemini → rename/move pipeline (now per work process), **Organize now**, and plan/credit metering.
-- **Production** — `579932a` is live. After the dashboard steps in ⚠️ 7, you reported login working and were onboarding on `drivetag-ai.com`. I haven't re-probed that from outside since.
+- **Production** — last probed 2026-09-17, when `579932a` was live on DigitalOcean with localhost env vars, and Vercel's build had failed. After the dashboard steps in ⚠️ 7 you reported login working and were onboarding on `drivetag-ai.com`. Nothing has been re-probed from outside since, and this session can't (no egress).
 - **Local dev shares the production database** — `backend/.env` points at the production Supabase project. Local `AUTO_SYNC_INTERVAL_SECONDS` is now `0`, and channel renewal only runs with `NODE_ENV=production`, so a laptop can't sweep or renew production users' channels. Don't connect Drive locally with an account you also use in production unless `TOKEN_ENCRYPTION_KEY` matches DigitalOcean's.
 - **Where the accounts stand** — on 2026-09-17 you reached onboarding's folder picker on the live site. An end-to-end run with a real image on production hasn't been confirmed here.
 - **Frontend** — pastel "Lavender garden" design with GSAP animation throughout.
   - Pages: Landing (now with pricing), `/login`, `/plans`, `/onboarding` (creates the first work process), `/connect`, `/dashboard` (per-process cards, usage meter), `/processes/new` and `/processes/:id` (the full editor with a Drive folder browser).
   - Vercel Analytics is wired.
-- **Accounts** — real credentials are in both `.env` files on this machine. Real Google sign-in has now been completed with more than one account.
+- **Accounts** — real credentials were filled into both `.env` files in the working copy used on 2026-09-17, and real Google sign-in has been completed with more than one account. **`.env` files don't travel through git**, so any other checkout starts blank — the cloud checkout this snapshot was written from has neither `.env` file nor `node_modules`.
 - **"Failed to fetch"** — solved. It was a port mismatch, not an auth bug: see ⚠️ 5.
 - **Google sign-in screen** — it still says `ckskwjtjydaqewwojsfj.supabase.co`. The fix (Supabase custom domain + Google brand verification) is written up in [domainguide.md](domainguide.md) §9 and is manual/dashboard work.
 - **Domain** — `drivetag-ai.com` and `www` still point at a Namecheap host, not straight at Vercel, and `www` shows a parking page ([domainguide.md](domainguide.md) §2). Google domain verification is not done.
@@ -32,7 +39,7 @@ The one-page answer to "what is true right now, and what do I do next". Read thi
 
 ## ⚠️ Read before doing anything
 
-### 0. Work processes, plans and usage — built, tested, NOT deployed
+### 0. Work processes, plans and usage — built, tested, committed; rollout unverified
 
 **What changed.** Full design and rules: [CLAUDE.md](CLAUDE.md) "Non-obvious design decisions".
 - **Schema:** `supabase/migrations/0002_work_processes.sql` adds `work_processes`, `process_destinations`, usage counters on `subscriptions`, `image_credit_grants` and `schema_migrations`. It also adds SQL functions:
@@ -50,11 +57,16 @@ The one-page answer to "what is true right now, and what do I do next". Read thi
 - **Security fix that predates this work:** the Drive-connect OAuth callback used to store the grant for whoever *started* the flow. Anyone could send a victim their own consent link and attach the victim's Drive to the sender's account. The callback now parks the grant, and only the signed-in user who started the flow can claim it (`POST /api/auth/google/complete`).
 
 **Rollout, in this order** (don't reorder):
-1. **Supabase SQL editor:** paste and run all of `supabase/migrations/0002_work_processes.sql`. Then run the checks in [ForDev.md](ForDev.md) §2b. The live `579932a` backend keeps working against the new schema.
-2. **Commit and push the backend and frontend together** to `production`:
+0. **Find out where you actually are.** The code is pushed, but nothing else about this rollout has been confirmed. Three checks answer it:
+   - `curl -s https://api.drivetag-ai.com/api/plans` → a 200 with plan JSON means the new backend is serving; a 404 means it isn't.
+   - DigitalOcean runtime logs → a `"Schema problem"` line means `0002` has **not** been run.
+   - The JS bundle linked from `https://drivetag-ai.com/` → if it still contains `localhost:3001`, Vercel is serving the old build and step 2 is unfinished.
+1. **Supabase SQL editor:** paste and run all of `supabase/migrations/0002_work_processes.sql`, unless step 0 shows it's already applied. Then run the checks in [ForDev.md](ForDev.md) §2b. An older backend keeps working against the new schema, so this is safe to do first.
+2. **Get the pushed code actually deployed.** `3f4f554` is on `production` and both platforms build from that branch, but on 2026-09-17 the Vercel build **failed** with `Missing VITE_API_URL for this build`:
+   - Set `VITE_API_URL=https://api.drivetag-ai.com` in Vercel → Settings → Environment Variables, then redeploy with the build cache **off** (domainguide.md §2b).
    - DigitalOcean (backend) is backward compatible with the old frontend, since the legacy endpoints are kept.
    - If Vercel finishes first, the new frontend shows "DriveTag is updating" for a minute.
-   - Then confirm `https://api.drivetag-ai.com/api/plans` returns 200, and that the DigitalOcean logs have no `"Schema problem"` line.
+   - Then re-run the step 0 checks; all three should now pass.
 3. **Smoke test with your account:**
    - The dashboard shows "My first process" (migrated from your old Raw/Destination). Edit it and add 2 destinations. Leave "Create in Master" selected.
    - Drop 2 images into Raw. Each should be renamed with the template and land in the destination the AI picked.
@@ -149,7 +161,7 @@ Production is unchanged: `CORS_ORIGINS` only, which requires `NODE_ENV=productio
 
 **Next in line, confirmed from outside.** DigitalOcean `CORS_ORIGINS` and `FRONTEND_URL` are still localhost; `NODE_ENV=production` is correctly set. DNS for `@` and `www` goes through a Namecheap host, with a parking page on `www`.
 
-**Fixed in code** (uncommitted as of this snapshot):
+**Fixed in code** (all committed; on `production` at `3f4f554`):
 - `frontend/vercel.json` adds the SPA rewrite.
 - `vite build` fails without `VITE_API_URL` and the two Supabase vars, and a Vercel build fails if `VITE_API_URL` is localhost. `api.ts` falls back to localhost only in dev.
 - The Supabase **PKCE** flow, verified live: the authorize URL carries `code_challenge=s256`. A misrouted sign-in now carries a one-time code bound to the browser, not a live token.
@@ -344,13 +356,13 @@ Details: [frontend/README.md](frontend/README.md).
 
 | Service | State |
 |---|---|
-| GitHub | Branches: `production` (default, deploys from here), `staging` (identical to production today), `prod` (stale local branch, 10 commits behind) |
+| GitHub | Branches: `production` (default, both platforms deploy from here) at `3f4f554`, `production-vdsjba` (identical, current working branch), `staging` at `75abc96`. The stale local `prod` branch is gone from this checkout |
 | Supabase | Project `ckskwjtjydaqewwojsfj`. Migration run, Google provider enabled, Site URL set — in the other environment |
 | Google Cloud | OAuth client with `localhost:3001` and Supabase redirect URIs ✅. Consent-screen test user unconfirmed. Domain verification not done. Restricted-scope app verification not started |
 | Gemini | Key created (other environment). Model `gemini-3.6-flash` |
 | Domain | `drivetag-ai.com` on Namecheap. DNS, SSL, Google verification not started → [domainguide.md](domainguide.md) |
-| DigitalOcean | **Unconfirmed** — no live backend URL recorded anywhere |
-| Vercel | **Unconfirmed** — no live frontend URL recorded. Analytics must still be enabled in the dashboard |
+| DigitalOcean | Live at `api.drivetag-ai.com` (`/health` 200 on 2026-09-17), default host `drivetag-ai-geirr.ondigitalocean.app`. Env vars still held localhost values at last check (⚠️ 7) |
+| Vercel | Live at `drivetag-ai.com`, but the 2026-09-17 build **failed** on the missing `VITE_API_URL`, so the served bundle may still be `75abc96`. Analytics must still be enabled in the dashboard |
 | ngrok | CLI installed, not authenticated |
 | Payments | Lemon Squeezy vs Paddle not chosen |
 
@@ -358,7 +370,7 @@ Details: [frontend/README.md](frontend/README.md).
 
 ## What's next, in priority order
 
-1. **Roll out the work-processes release** (⚠️ 0): run `0002`, push, then smoke-test on `drivetag-ai.com`.
+1. **Roll out the work-processes release** (⚠️ 0). The code is already pushed, so what's left is: establish where the rollout actually stands (⚠️ 0 step 0), run `0002` if it hasn't been, get Vercel building by setting `VITE_API_URL`, then smoke-test on `drivetag-ai.com`.
    - If Google says "Access blocked" when connecting Drive, add the account as a **test user** on the OAuth consent screen, since the `drive` scope is restricted.
 2. **Security follow-ups** (⚠️ 4).
 3. **Domain** — work through [domainguide.md](domainguide.md). This unblocks Drive webhook delivery.
@@ -376,10 +388,10 @@ The full checklist is [task.md](task.md).
 
 ## Known issues and housekeeping
 
-- `backend/src/config/env.js` error message references a `backend/.env.example` that has never existed in this repo.
-- `.claude/settings.local.json` is committed; it's meant to be a personal, untracked file.
-- Local `prod` branch is stale.
+- `.claude/settings.local.json` is committed; it's meant to be a personal, untracked file, and `.gitignore` has no `.claude` entry.
+- The stale local `prod` branch isn't present in the current checkout — delete it wherever it still exists.
 - `frontend/package.json` name is still the template's `temp-front`.
+- *Fixed:* `backend/src/config/env.js` used to point at a `backend/.env.example` that has never existed; it now names tutorial.md.
 - One lint warning, no errors: `AuthContext.tsx` exports a non-component alongside components (fast refresh).
 - The Dashboard's "At a glance" counts cover the latest 50 activity rows (`ACTIVITY_LIMIT`), not all-time totals; the card says so.
 - The Google sign-in screen shows `ckskwjtjydaqewwojsfj.supabase.co` until [domainguide.md](domainguide.md) §9 is done.
