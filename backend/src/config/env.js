@@ -26,6 +26,12 @@ function optionalPositiveInt(name, fallback) {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
+/** Like optionalPositiveInt, but 0 is a valid value too (used for "this feature is off"). */
+function optionalNonNegativeInt(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   port: Number(optional("PORT", "3001")),
@@ -80,6 +86,24 @@ export const env = {
     // "Organize now" (pipeline.service.js's aiJobSlots semaphore), since each holds an
     // image buffer in memory and Gemini has per-project rate limits.
     maxConcurrentAiJobs: optionalPositiveInt("MAX_CONCURRENT_AI_JOBS", 20),
+  },
+
+  // Comma-separated admin emails, compared lower-cased + trimmed against the signed-in user's
+  // (Supabase-verified) email. Empty ⇒ nobody is admin — fail closed.
+  admin: {
+    emails: optional("ADMIN_EMAILS", "")
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean),
+  },
+
+  beta: {
+    // Both a percent (1-90) and a code are required for the beta discount to exist; either being
+    // unset/zero turns the whole feature off (see services/beta.service.js's discountEnabled()).
+    discountPercent: optionalNonNegativeInt("BETA_DISCOUNT_PERCENT", 0),
+    discountCode: optional("BETA_DISCOUNT_CODE", ""),
+    // true while the Google OAuth app is in Testing status: Drive refresh tokens expire every 7 days.
+    googleAppTesting: optional("GOOGLE_APP_TESTING", "false") === "true",
   },
 };
 

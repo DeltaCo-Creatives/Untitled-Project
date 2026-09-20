@@ -128,6 +128,10 @@ export interface PlansResponse {
   documentPacks: DocumentPack[];
   fileLimits: FileLimits;
   processLimits: ProcessLimits;
+  /** false: prices are tax-exclusive, and the Merchant of Record adds the local rate at checkout. */
+  pricesIncludeTax: boolean;
+  /** e.g. "Lemon Squeezy". null while no payment provider is wired up. */
+  merchantOfRecord: string | null;
 }
 
 export interface CurrentPlan {
@@ -183,6 +187,55 @@ export interface MeResponse {
   plan: CurrentPlan | null;
   usage: Usage | null;
   processCounts: { total: number; active: number; max: number };
+  /** ADMIN_EMAILS match — a convenience for showing admin UI, never a security boundary; the backend re-checks. */
+  admin: boolean;
+  beta: BetaStatus;
+  /** true while the Google OAuth app is in Testing status: Drive refresh tokens expire after 7 days. */
+  googleAppTesting: boolean;
+  /** When Drive was connected (google_credentials.updated_at, ISO). null until it's connected. */
+  driveConnectedAt: string | null;
+}
+
+// ---------------------------------------------------------------- beta
+
+export interface BetaStatus {
+  /** True only once a signup row for this email has been marked added_to_google. */
+  tester: boolean;
+  /** 0 unless a beta discount is configured AND this user is a tester. */
+  discountPercent: number;
+  /** null unless a beta discount is configured AND this user is a tester — never leaked otherwise. */
+  discountCode: string | null;
+}
+
+export interface BetaSignupInput {
+  name: string;
+  email: string;
+  workType?: string;
+  weeklyVolume?: string;
+  consent: boolean;
+}
+
+/** As the admin listing and PATCH response serialize it (camelCase, like processes). */
+export interface BetaSignup {
+  id: string;
+  email: string;
+  name: string;
+  workType: string | null;
+  weeklyVolume: string | null;
+  addedToGoogle: boolean;
+  addedAt: string | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface BetaSignupsResponse {
+  signups: BetaSignup[];
+  counts: { total: number; added: number; pending: number };
+}
+
+export interface BetaSignupPatch {
+  addedToGoogle?: boolean;
+  notes?: string;
 }
 
 // ---------------------------------------------------------------- work processes
@@ -389,6 +442,45 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Like `request`, but for a non-JSON response (the beta signups CSV export). */
+async function requestBlob(path: string): Promise<Blob> {
+  if (!API_URL) {
+    throw new ApiError('This build of DriveTag has no API address (VITE_API_URL). Set it on the host and rebuild.', 0);
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const headers = new Headers();
+  if (session?.access_token) headers.set('Authorization', `Bearer ${session.access_token}`);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, { headers });
+  } catch {
+    throw new ApiError(
+      `Couldn't reach the DriveTag server at ${API_URL}. Check that the backend is running and that this page's address (${window.location.origin}) is listed in CORS_ORIGINS.`,
+      0,
+    );
+  }
+
+  if (!res.ok) {
+    let message = res.statusText || `Request failed with status ${res.status}`;
+    let code: string | undefined;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+      if (typeof body?.code === 'string') code = body.code;
+    } catch {
+      // response had no JSON body; keep the status text
+    }
+    throw new ApiError(message, res.status, code);
+  }
+
+  return res.blob();
+}
+
 function query(params: Record<string, string | number | undefined | null>) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -413,11 +505,17 @@ const NO_USAGE: KindUsage = {
   exhausted: true,
 };
 
+const NO_BETA_STATUS: BetaStatus = { tester: false, discountPercent: 0, discountCode: null };
+
 function withKindUsage(me: MeResponse): MeResponse {
   const usage = me.usage;
   const plan = me.plan;
   return {
     ...me,
+    admin: me.admin ?? false,
+    beta: me.beta ?? NO_BETA_STATUS,
+    googleAppTesting: me.googleAppTesting ?? false,
+    driveConnectedAt: me.driveConnectedAt ?? null,
     plan: plan
       ? {
           ...plan,
@@ -457,6 +555,8 @@ function withPlanFamilies(body: PlansResponse): PlansResponse {
     })),
     documentPacks: body.documentPacks ?? [],
     fileLimits: body.fileLimits ?? { documentMaxMb: 20, pagesRead: 5, textChars: 12000, editingGraceMinutes: 10 },
+    pricesIncludeTax: body.pricesIncludeTax ?? false,
+    merchantOfRecord: body.merchantOfRecord ?? null,
   };
 }
 
@@ -481,6 +581,32 @@ export const api = {
    */
   deleteAccount: () =>
     request<{ deleted: boolean }>('/api/me', { method: 'DELETE', body: JSON.stringify({ confirm: 'DELETE' }) }),
+
+  /** Public, no auth. Returns the same body whether the email is new or already on the list. */
+  submitBetaSignup: (body: BetaSignupInput) =>
+    request<{ received: boolean }>('/api/beta/signups', { method: 'POST', body: JSON.stringify(body) }),
+  /** Admin only; the backend 403s (`not_admin`) for anyone else regardless of what the UI shows. */
+  listBetaSignups: () => request<BetaSignupsResponse>('/api/beta/signups'),
+  updateBetaSignup: (id: string, patch: BetaSignupPatch) =>
+    request<{ signup: BetaSignup }>(`/api/beta/signups/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  /** Fetches the CSV with the auth header (a bearer token can't go in an <a href>) and triggers a file download. */
+  downloadBetaSignupsCsv: async () => {
+    const blob = await requestBlob('/api/beta/signups.csv');
+    const url = URL.createObjectURL(blob);
+    try {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'drivetag-beta-signups.csv';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  },
 
   listFolders: ({ q, parentId, pageToken }: { q?: string; parentId?: string; pageToken?: string | null } = {}) =>
     request<FolderPage>(`/api/drive/folders${query({ q, parentId, pageToken })}`),

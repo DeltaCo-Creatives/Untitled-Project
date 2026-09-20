@@ -4,6 +4,7 @@ import type { PlanInfo, PlanTier } from '../../lib/api';
 import { plural } from '../../lib/format';
 import { Button, ButtonLink } from '../ui/Button';
 import { PAYMENTS_PENDING_NOTE, formatPrice, isFreePlan, monthsFree, planFeatures } from './planFeatures';
+import type { BetaPricing } from './PlanGrid';
 
 // Keyed by tier, not plan id: every family's Creator/Studio/Enterprise tier gets the same accent.
 const ACCENTS: Record<PlanTier, { icon: LucideIcon; bubble: string; check: string }> = {
@@ -22,9 +23,22 @@ interface PlanCardProps {
   compact?: boolean;
   /** For an Images + Documents plan: "Save $2.99/month vs buying both", only when the saving is real. */
   savingsNote?: string | null;
+  /** Prices are tax-exclusive unless GET /api/plans says otherwise — drives the "Excludes VAT/sales tax" line. */
+  pricesIncludeTax?: boolean;
+  /** A signed-in beta tester's discount. Renders the card exactly as today when null. */
+  beta?: BetaPricing | null;
 }
 
-export function PlanCard({ plan, currency, current = false, signedIn = false, compact = false, savingsNote = null }: PlanCardProps) {
+export function PlanCard({
+  plan,
+  currency,
+  current = false,
+  signedIn = false,
+  compact = false,
+  savingsNote = null,
+  pricesIncludeTax = false,
+  beta = null,
+}: PlanCardProps) {
   const titleId = useId();
   const accent = ACCENTS[plan.tier] ?? ACCENTS.creator;
   const Icon = accent.icon;
@@ -33,6 +47,8 @@ export function PlanCard({ plan, currency, current = false, signedIn = false, co
   const features = planFeatures(plan, { compact });
   const yearly = plan.price.yearly;
   const freeMonths = !free && yearly != null ? monthsFree(plan.price.monthly, yearly) : 0;
+  const showBeta = !free && Boolean(beta) && plan.price.monthly > 0;
+  const betaMonthly = showBeta && beta ? Math.round(plan.price.monthly * (100 - beta.percent)) / 100 : null;
 
   return (
     <article
@@ -77,17 +93,34 @@ export function PlanCard({ plan, currency, current = false, signedIn = false, co
         ) : (
           <>
             <p className="font-display text-4xl font-bold tracking-tight text-ink">
-              <span aria-hidden>{formatPrice(plan.price.monthly, currency)}</span>
-              <span aria-hidden className="text-lg font-bold text-ink-soft">
-                /month
-              </span>
-              <span className="sr-only">{formatPrice(plan.price.monthly, currency)} per month</span>
+              {showBeta && betaMonthly != null ? (
+                <>
+                  <s aria-hidden className="mr-2 align-middle text-xl font-bold text-ink-soft decoration-2">
+                    {formatPrice(plan.price.monthly, currency)}
+                  </s>
+                  <span className="sr-only">Regular price {formatPrice(plan.price.monthly, currency)} per month. Beta price</span>
+                  <span aria-hidden>{formatPrice(betaMonthly, currency)}</span>
+                  <span aria-hidden className="text-lg font-bold text-ink-soft">
+                    /month
+                  </span>
+                  <span className="sr-only">{formatPrice(betaMonthly, currency)} per month</span>
+                </>
+              ) : (
+                <>
+                  <span aria-hidden>{formatPrice(plan.price.monthly, currency)}</span>
+                  <span aria-hidden className="text-lg font-bold text-ink-soft">
+                    /month
+                  </span>
+                  <span className="sr-only">{formatPrice(plan.price.monthly, currency)} per month</span>
+                </>
+              )}
             </p>
             {yearly != null && (
               <p className="plan-billing mt-1.5 text-xs font-bold text-ink-soft">
                 or {formatPrice(yearly, currency)}/year{freeMonths >= 1 ? ` — ${plural(freeMonths, 'month', 'months')} free` : ''}
               </p>
             )}
+            {!pricesIncludeTax && <p className="mt-1 text-[11px] font-bold text-ink-soft">Excludes VAT/sales tax</p>}
           </>
         )}
         {savingsNote && (

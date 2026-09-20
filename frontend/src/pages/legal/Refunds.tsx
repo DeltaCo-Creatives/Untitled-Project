@@ -21,7 +21,8 @@ export default function Refunds() {
         <p>
           Paid plans and checkout aren't live on DriveTag yet — see our{' '}
           <Link to="/plans" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">pricing page</Link>. This Refund Policy
-          describes how refunds will work once they are, so you know what to expect before you ever pay us.
+          describes how refunds will work once they are, so you know what to expect before you ever pay us. Purchases
+          will be made through Lemon Squeezy, our Merchant of Record, so refunds are issued through them too.
         </p>
       </LegalSection>
 
@@ -75,7 +76,8 @@ export default function Refunds() {
         <p>
           Email <a className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60" href="mailto:support@drivetag-ai.com">support@drivetag-ai.com</a>{' '}
           from your account's email address, and tell us what you'd like refunded. Approved refunds go back to your
-          original payment method through our payment provider, typically within 5–10 business days.
+          original payment method through Lemon Squeezy, our Merchant of Record, typically within 5–10 business days.
+          Prices exclude VAT and sales tax, and any tax you were charged is refunded along with the purchase price.
         </p>
       </LegalSection>
 

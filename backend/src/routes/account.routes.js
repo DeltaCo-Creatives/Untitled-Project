@@ -2,10 +2,11 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { env } from "../config/env.js";
 import { getChannelForUser, isPollingChannel } from "../repositories/driveChannel.repo.js";
-import { getRefreshToken } from "../repositories/credentials.repo.js";
+import { getCredentialStatus } from "../repositories/credentials.repo.js";
 import { isStaleClaim, listRecent } from "../repositories/processedFile.repo.js";
 import { listForUser } from "../services/processes.service.js";
 import { deleteAccount } from "../services/account.service.js";
+import { betaStatusFor, isAdmin } from "../services/beta.service.js";
 import { isUuid } from "../utils/processValidation.js";
 import { serializeEntitlement, serializeLegacyFolderConfig } from "../utils/serialize.js";
 import { HttpError } from "../utils/httpError.js";
@@ -17,10 +18,11 @@ router.use(requireAuth);
 /** Everything the dashboard needs to render in one call. */
 router.get("/me", async (req, res) => {
   const userId = req.user.id;
-  const [credential, channel, { processes, limit, entitlement }] = await Promise.all([
-    getRefreshToken(userId),
+  const [credential, channel, { processes, limit, entitlement }, beta] = await Promise.all([
+    getCredentialStatus(userId),
     getChannelForUser(userId),
     listForUser(userId),
+    betaStatusFor(req.user.email),
   ]);
 
   const polling = isPollingChannel(channel);
@@ -28,7 +30,7 @@ router.get("/me", async (req, res) => {
 
   res.json({
     user: { id: userId, email: req.user.email },
-    driveConnected: Boolean(credential),
+    driveConnected: credential.connected,
     watching: Boolean(channel),
     watchMode: channel ? (polling ? "polling" : "live") : null,
     watchExpiresAt: channel && !polling ? channel.expires_at : null,
@@ -46,6 +48,10 @@ router.get("/me", async (req, res) => {
       ? { status: entitlement.usage.status, plan: plan.id, trialEndsAt: null, currentPeriodEnd: usage.periodResetsAt }
       : null,
     entitled: Boolean(entitlement && (entitlement.credits.image > 0 || entitlement.credits.document > 0)),
+    admin: isAdmin(req.user.email),
+    beta,
+    googleAppTesting: env.beta.googleAppTesting,
+    driveConnectedAt: credential.updatedAt,
   });
 });
 

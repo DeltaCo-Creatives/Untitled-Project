@@ -1,9 +1,9 @@
 // Run from backend/: node --test --experimental-test-module-mocks test/sql-migrations.test.js
 //
-// Applies the real supabase/migrations/*.sql files (0001 -> 0002 -> 0003 -> 0004 -> 0004
-// again) against an in-memory PGlite Postgres and exercises the money-path SQL functions
-// directly, the way the deployed backend calls them via supabase.rpc(...). No .env, no
-// network, no real Supabase project.
+// Applies the real supabase/migrations/*.sql files (0001 -> 0002 -> 0003 -> 0004 -> 0005
+// -> 0004 -> 0005 again) against an in-memory PGlite Postgres and exercises the money-path
+// SQL functions directly, the way the deployed backend calls them via supabase.rpc(...).
+// No .env, no network, no real Supabase project.
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -614,6 +614,124 @@ describe("0004 idempotency", () => {
   test("schema_migrations has exactly one row for 0004_documents after applying it twice", async () => {
     const { rows } = await db.query(
       "select count(*)::int as n from public.schema_migrations where version = '0004_documents';",
+    );
+    assert.equal(rows[0].n, 1);
+  });
+});
+
+// ---------------------------------------------------------- grant_credits (0005 fix)
+
+describe("grant_credits: readable insufficient_credits error (0005)", () => {
+  test("removing more document credits than the balance raises insufficient_credits and changes nothing", async () => {
+    const userId = await createUser(db);
+    await db.query("select public.grant_credits($1, 'document', 100, 'starter pack') as b;", [userId]);
+
+    await assert.rejects(
+      () => db.query("select public.grant_credits($1, 'document', -250, 'refund, invoice #13') as b;", [userId]),
+      /insufficient_credits/,
+    );
+
+    const sub = await getSubscription(userId);
+    assert.equal(sub.document_topup_balance, 100, "balance must be unchanged by the refused removal");
+
+    const { rows: grants } = await db.query(
+      "select count(*)::int as n from public.image_credit_grants where user_id = $1 and reason = 'refund, invoice #13';",
+      [userId],
+    );
+    assert.equal(grants[0].n, 0, "a refused grant must leave no audit row");
+  });
+
+  test("removing more image credits than the balance raises insufficient_credits and changes nothing", async () => {
+    const userId = await createUser(db);
+    await db.query("select public.grant_credits($1, 'image', 40, 'starter pack') as b;", [userId]);
+
+    await assert.rejects(
+      () => db.query("select public.grant_credits($1, 'image', -999, 'way too much') as b;", [userId]),
+      /insufficient_credits/,
+    );
+
+    const sub = await getSubscription(userId);
+    assert.equal(sub.topup_balance, 40, "balance must be unchanged by the refused removal");
+
+    const { rows: grants } = await db.query(
+      "select count(*)::int as n from public.image_credit_grants where user_id = $1 and reason = 'way too much';",
+      [userId],
+    );
+    assert.equal(grants[0].n, 0, "a refused grant must leave no audit row");
+  });
+
+  test("removing exactly the whole balance succeeds and leaves 0", async () => {
+    const userId = await createUser(db);
+    await db.query("select public.grant_credits($1, 'document', 250, 'starter pack') as b;", [userId]);
+
+    const { rows } = await db.query(
+      "select public.grant_credits($1, 'document', -250, 'used it all') as b;",
+      [userId],
+    );
+    assert.equal(rows[0].b, 0);
+
+    const sub = await getSubscription(userId);
+    assert.equal(sub.document_topup_balance, 0);
+  });
+
+  test("a positive grant still works and still logs", async () => {
+    const userId = await createUser(db);
+    const { rows } = await db.query("select public.grant_credits($1, 'image', 30, 'welcome pack') as b;", [userId]);
+    assert.equal(rows[0].b, 30);
+
+    const { rows: grants } = await db.query(
+      "select amount from public.image_credit_grants where user_id = $1 and reason = 'welcome pack';",
+      [userId],
+    );
+    assert.equal(grants.length, 1);
+    assert.equal(grants[0].amount, 30);
+  });
+});
+
+// ------------------------------------------------------------------------ beta_signups
+
+describe("beta_signups", () => {
+  test("a second insert with a different-cased email violates the unique index", async () => {
+    await db.query("insert into public.beta_signups (email, name, consent_at) values ($1, $2, now());", [
+      "case@example.com",
+      "First",
+    ]);
+
+    await assert.rejects(() =>
+      db.query("insert into public.beta_signups (email, name, consent_at) values ($1, $2, now());", [
+        "Case@Example.com",
+        "Second",
+      ]),
+    );
+  });
+
+  test("admin_mark_beta_added returns false for an unknown email, true + sets added_at for a known one", async () => {
+    const { rows: unknown } = await db.query("select public.admin_mark_beta_added('nobody@example.com') as ok;");
+    assert.equal(unknown[0].ok, false);
+
+    await db.query("insert into public.beta_signups (email, name, consent_at) values ($1, $2, now());", [
+      "known@example.com",
+      "Known Person",
+    ]);
+
+    const { rows: known } = await db.query("select public.admin_mark_beta_added('KNOWN@example.com') as ok;");
+    assert.equal(known[0].ok, true);
+
+    const { rows: sig } = await db.query(
+      "select added_to_google, added_at from public.beta_signups where email = $1;",
+      ["known@example.com"],
+    );
+    assert.equal(sig[0].added_to_google, true);
+    assert.ok(sig[0].added_at, "added_at must be set");
+  });
+});
+
+// --------------------------------------------------------------------------- idempotency
+
+describe("0005 idempotency", () => {
+  test("schema_migrations has exactly one row for 0005_beta after applying it twice", async () => {
+    const { rows } = await db.query(
+      "select count(*)::int as n from public.schema_migrations where version = '0005_beta';",
     );
     assert.equal(rows[0].n, 1);
   });

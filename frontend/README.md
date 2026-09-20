@@ -151,6 +151,7 @@ Then submit for **brand verification**. Because the app requests the restricted 
 | `/` | public | Landing — product, pricing |
 | `/login` | public | Google sign-in |
 | `/plans` | public | Family and plan comparison. `?family=images\|documents\|complete` deep-links a family (`FamilyPicker`); the legacy `#documents` anchor still works and pre-selects Documents |
+| `/beta` | public | Closed-beta sign-up. `POST /api/beta/signups` — name, the Google account email they'll sign in with, optional work type and weekly volume, and an **unticked** consent box. States the two things testers must know up front: the "Google hasn't verified this app" screen, and the weekly Drive reconnect. Free-plan numbers come from `GET /api/plans`, never hard-coded |
 | `/privacy`, `/terms`, `/refunds`, `/cookies`, `/data-deletion` | public | Legal pages ([Pricing UI, cookie consent & analytics, legal pages](#pricing-ui-cookie-consent--analytics-legal-pages)) |
 | `/onboarding` | protected | 5-step stepper (Connect Drive → What to sort → Raw folder → Sorting → Go live) that creates the first work process, of either kind |
 | `/dashboard` | protected | Per-process cards (with a kind badge), per-kind usage meter, activity feed, account |
@@ -205,7 +206,8 @@ Vercel and this backend deploy from the same push but as two separate services, 
 
 - `withKind()` defaults a process's `kind` to `'image'` when a `GET /api/processes` response omits it.
 - `withKindUsage()` fills in `usage.images`/`usage.documents` from the legacy flat fields (`freeUsed`/`freeLimit`/…) when `GET /api/me` doesn't return them yet, and defaults `plan.family`/`freeDocuments`/`monthlyDocuments`.
-- `withPlanFamilies()` does the same for `GET /api/plans`: empty `families`/`documentPacks` arrays and sensible `fileLimits` defaults when the backend predates them, and derives `plan.family`/`plan.tier` from the plan id when they're missing.
+- `withPlanFamilies()` does the same for `GET /api/plans`: empty `families`/`documentPacks` arrays and sensible `fileLimits` defaults when the backend predates them, derives `plan.family`/`plan.tier` from the plan id when they're missing, and defaults `pricesIncludeTax` to `false` and `merchantOfRecord` to `null`.
+- The same rule covers this release's `/api/me` additions: `admin` → `false`, `beta` → `{tester: false, discountPercent: 0, discountCode: null}`, `googleAppTesting` → `false`, `driveConnectedAt` → `null`. Against the *current* production backend, which has none of them, that means no admin card, no beta pricing and no reconnect warning — never a crash.
 - `lib/messages.ts`'s `errorMessage()` catches the sharper failure mode too — a route that doesn't exist at all yet (a 404 whose message starts with `"No route for"`) — and shows "DriveTag is updating. Refresh in a minute." instead of a raw error.
 
 Every normalizer's fallback is the literal shape the previous release's API actually served, not a guess — keep these when adding the next new field for the same reason.
@@ -235,6 +237,8 @@ A work process's **kind** — `image` or `document` — is chosen once, when it'
 - **Activity feed.** `ActivityList` (`components/dashboard/ActivityList.tsx`) shows a kind icon (image/document) next to each filename, renders document rows' chips from `type`/`topic`/`organization`/`document_date` instead of images' `genre`/`subject`/`style`, and — once an account's activity actually mixes both kinds — adds an "All kinds / Images / Documents" filter row alongside the existing per-process filter.
 - **Account.** `AccountCard` → **"Delete account"**: typed `DELETE` confirmation → `api.deleteAccount()` → `DELETE /api/me` → signs out (falling back to a local-only sign-out if the server call fails, since the account is already gone by then).
 - Each process card shows live **"N AI sorting"**, from `status.workers[processId]`, and **"Up to N AI at once on your plan"** from `plan.aiPerProcess`.
+- **Drive-expiry warning.** While `me.googleAppTesting` is true (the Google OAuth app is in Testing status), Google expires Drive refresh tokens after 7 days. From day 5 after `me.driveConnectedAt`, a warning card sits above the fold with a **Reconnect Drive** link to `/connect`; before that the fact is stated quietly in `ConnectionCard`. A null `driveConnectedAt` renders nothing. Set `GOOGLE_APP_TESTING=false` on the backend once verification is granted, or every user is warned about an expiry that no longer applies.
+- **Admin only.** `BetaSignupsCard` renders solely when `me.admin` is true: the closed-beta sign-up list, **Copy pending emails** (for pasting into Google Auth Platform → Audience → Test users), a per-row "Added" toggle, a CSV download and a counter against Google's 100-tester cap. `me.admin` decides *rendering* only — every `/api/beta/signups*` route re-checks `ADMIN_EMAILS` server-side, so hiding the card is never the security boundary.
 
 ---
 
@@ -289,6 +293,9 @@ GSAP guidance for Claude Code lives in `../.claude/skills/gsap-*` — third-part
 
 Every price, limit and feature line on `/plans` and the Landing page is driven by `GET /api/plans` (`backend/src/config/plans.js`), via `hooks/usePlans.ts` — **never hard-code a price or limit in the frontend.**
 
+- **Prices are tax-exclusive.** `pricesIncludeTax: false` in the payload drives an "Excludes VAT/sales tax" line under every price (`PlanCard`, `TopupPacks`) and the fuller sentence in `TransparencyNote`, which names Lemon Squeezy as the Merchant of Record that adds the buyer's local rate at checkout. Render that from the flag, not from a hard-coded assumption.
+- **Beta pricing** (`BetaPriceNote`, plus `beta?: BetaPricing | null` on `PlanGrid`/`PlanCard`) only appears for a signed-in tester whose `/api/me` carries a percent and a code. The regular price is struck through with a visually-hidden "Regular price … Beta price" reading order, so a screen reader can tell the two apart. A signed-out visitor never sees any of it, and the discount itself is redeemed in Lemon Squeezy's checkout, not applied by us.
+
 - **`FamilyPicker`** (`components/billing/FamilyPicker.tsx`) is a single-choice, accessible segmented control — native radio inputs in a `fieldset`, so arrow-key navigation and screen readers come for free — for the three paid families (Images / Documents / Images + Documents). `/plans` keeps the chosen family in the URL (`?family=images|documents|complete`, `useSearchParams`) so a link can land directly on one; the landing page's copy (`LandingPricingSection.tsx`) keeps its own `useState` instead, since it's a smaller, self-contained picker. The legacy `#documents` anchor still works: `Plans.tsx` reads `window.location.hash === '#documents'` once on mount and pre-selects Documents.
 - **`PlanGrid`/`PlanCard`** (`components/billing/PlanGrid.tsx`, `PlanCard.tsx`) render Free plus the selected family's Creator/Studio/Enterprise tiers (`plansForFamily()` in `planFeatures.ts`). An Images + Documents card shows a savings line — `bundleSavings()` compares it against buying that tier's Images and Documents plans separately, and returns `null` (nothing shown) unless the saving is genuinely positive, never a fabricated percentage.
 - **Prices** are USD placeholders, formatted by `formatPrice()` (`components/billing/planFeatures.ts`).
@@ -328,9 +335,9 @@ Every price, limit and feature line on `/plans` and the Landing page is driven b
 
 ## State & next steps
 
-- **Checkout UI** — once a payment provider (Lemon Squeezy vs. Paddle) is chosen. Plan/pack buttons already show real prices from `/api/plans`; only the purchase action is missing.
+- **Checkout UI** — Lemon Squeezy is chosen; the buttons still say "Coming soon". Plan and pack buttons already render real, tax-exclusive prices from `/api/plans`; only the purchase action is missing.
 - **Google Drive Picker widget** — optional upgrade over the current searchable folder list (`components/drive/FolderBrowser.tsx`).
 - **Unsaved-changes guard on browser Back** in the process editor. `ProcessEditor.tsx` guards a page unload (`beforeunload`) and in-app router links (`guardLinks`), but `BrowserRouter` has no `useBlocker`, so the browser's own Back/Forward buttons aren't covered yet.
 - **Dashboard "At a glance" counts** cover the latest 50 activity rows (`ACTIVITY_LIMIT`), not all-time totals — the card says so; real totals need a count endpoint.
-- **Rename the package** — `frontend/package.json`'s `name` is still `"temp-front"`.
+- ~~Rename the package~~ — done; `frontend/package.json` is now `drivetag-frontend`.
 - **Code-split the bundle.** The production build emits a single ~981 KB JS chunk (`dist/assets/index-*.js`), over Vite's 500 KB warning threshold and grown from ~925 KB with this release's new components. Route-level `React.lazy` is the natural first cut.

@@ -10,7 +10,7 @@ Automatic sorting for the **images and documents** creative agencies and freelan
   - For a document, the AI reads only the first 5 pages, or the first ~12,000 characters.
   - The AI provider doesn't train on submitted content. It may keep request logs for up to 55 days, only to prevent abuse ([Privacy Policy](https://drivetag-ai.com/privacy#zero-retention)).
 
-## Status (2026-09-19)
+## Status (2026-09-20)
 
 | Area | State |
 |---|---|
@@ -19,11 +19,11 @@ Automatic sorting for the **images and documents** creative agencies and freelan
 | Image sorting | ✅ Working end to end in production |
 | Document sorting | 🟡 Built and tested in this working tree. Goes live once migration `0004` is run and the release is pushed ([DeveloperToDo.md §1](DeveloperToDo.md)) |
 | Plan families | 🟡 Same release: Images, Documents, and Images + Documents plans, plus image and document packs |
-| Database | ✅ `0001`–`0003` applied · ⏳ `0004_documents.sql` waiting to be run |
+| Database | ✅ `0001`–`0004` applied · ⏳ `0005_beta.sql` waiting to be run |
 | Legal and compliance | ✅ Privacy, Terms, Refunds, Cookies and Data-deletion pages, all updated for documents. Also a consent-gated cookieless analytics banner, self-hosted fonts and self-service account deletion |
 | Domain | ⚠️ Vercel shows "Invalid Configuration" until the Namecheap records are fixed ([DeveloperToDo.md §2](DeveloperToDo.md)) |
 | Google verification | ⚠️ Search Console domain verification and OAuth branding pending ([DeveloperToDo.md §4](DeveloperToDo.md)) |
-| Payments | ❌ Prices are shown, checkout isn't built (Lemon Squeezy vs Paddle undecided). Plans and credits are set by hand ([DeveloperToDo.md §9](DeveloperToDo.md)) |
+| Payments | ⏳ Lemon Squeezy chosen and named in the legal pages as Merchant of Record; checkout isn't built. Prices exclude VAT/sales tax, which Lemon Squeezy adds at checkout. Plans and credits are set by hand ([DeveloperToDo.md §5](DeveloperToDo.md)) |
 
 **Your to-do list** (DNS, database migration, Google, hosting settings, security, decisions) is in **[DeveloperToDo.md](DeveloperToDo.md)**.
 
@@ -50,7 +50,7 @@ Both apps deploy from the `production` branch. Setup steps live in each app's RE
 
 ## Plans and pricing
 
-These are placeholder USD prices, shown on the site. Every number lives in [`backend/src/config/plans.js`](backend/src/config/plans.js) and reaches the website through `GET /api/plans`.
+These are placeholder USD prices, shown on the site, and they **exclude VAT and sales tax** — Lemon Squeezy is the Merchant of Record and adds the buyer's local rate at checkout, so the number below is what reaches us, not what a buyer in Berlin pays. Every number lives in [`backend/src/config/plans.js`](backend/src/config/plans.js) and reaches the website through `GET /api/plans`.
 
 Every plan has the same three tiers of scale, and the **family** decides which monthly allowances you get. Any plan can run both image and document processes, and can top up either kind with a pack.
 
@@ -123,6 +123,20 @@ The fixed costs to plan for:
 
 The owner's steps are in [DeveloperToDo.md](DeveloperToDo.md). On the code side:
 
-1. **Payments.** Once the provider is chosen, build checkout and the payment webhook. The webhook calls `grant_credits(user, kind, amount, ..., 'purchase', provider_reference)` for packs, and sets `subscriptions.plan`/`status`/`period_anchor` for subscriptions.
+1. **Payments.** Lemon Squeezy is chosen and named in the legal pages; checkout is still to build. The webhook (`POST /webhook/lemonsqueezy`) calls `grant_credits(user, kind, amount, ..., 'purchase', provider_reference)` for packs, and sets `subscriptions.plan`/`status`/`period_anchor` for subscriptions. The store, variant and signing-secret values the owner must collect first are in [DeveloperToDo.md §2.3](DeveloperToDo.md).
 2. **Cleanup release.** Remove the legacy `/api/drive/config`, `/raw-status` and `/organize` endpoints. Then, in a later migration, drop the v1 SQL functions that only the pre-document backend calls.
 3. **Nice to have.** A "re-sort" action for already-sorted files, `.xlsx`/`.pptx` support, and a Google Drive Picker.
+
+The closed beta runs in the meantime: `/beta` collects sign-ups, the owner's dashboard turns them into Google test users, and approved testers see a Lemon Squeezy discount code once one is configured.
+
+**What a beta discount does to those margins.** The AI cost per file doesn't move when the price does, so a discount cuts margin far faster than it cuts price. At full allowance use:
+
+| Discount | Images C/S/E | Documents C/S/E | Images + Documents C/S/E |
+|---|---|---|---|
+| none | 72% / 63% / 49% | 59% / 55% / 50% | 64% / 53% / 41% |
+| 30% off | 62% / 49% / 29% | 44% / 38% / 31% | 50% / 35% / 17% |
+| 50% off | 48% / 31% / **2%** | 24% / 16% / **6%** | 33% / **10%** / **−14%** |
+
+Complete Enterprise breaks even at a **42.8%** discount and loses money beyond it — at 50% off it costs about $10 a month per fully-used subscriber. Keeping every plan above a 20% floor means capping a blanket discount at about **28%**.
+
+Two things soften this: real usage sits well below the full allowance, and beta testers are the least likely people to max out an Enterprise plan. But if you want to advertise 50%, scope it to Creator and Studio rather than applying it to everything.

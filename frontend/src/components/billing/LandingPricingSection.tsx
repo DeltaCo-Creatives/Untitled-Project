@@ -37,7 +37,14 @@ export function LandingPricingSection({ plans, signedIn }: LandingPricingSection
     <>
       {plans.families.length > 0 && <FamilyPicker families={plans.families} value={family} onChange={setFamily} className="mb-10" />}
 
-      <PlanGrid plans={plans.plans} family={family} currency={plans.currency} signedIn={signedIn} compact />
+      <PlanGrid
+        plans={plans.plans}
+        family={family}
+        currency={plans.currency}
+        signedIn={signedIn}
+        compact
+        pricesIncludeTax={plans.pricesIncludeTax}
+      />
 
       <div data-reveal className="mt-10 text-center">
         <ButtonLink to="/plans" variant="secondary">
@@ -47,7 +54,13 @@ export function LandingPricingSection({ plans, signedIn }: LandingPricingSection
       </div>
 
       <DocumentsExplainer fileLimits={plans.fileLimits} compact className="mt-10" />
-      <TransparencyNote currency={plans.currency} compact className="mt-6" />
+      <TransparencyNote
+        currency={plans.currency}
+        compact
+        className="mt-6"
+        pricesIncludeTax={plans.pricesIncludeTax}
+        merchantOfRecord={plans.merchantOfRecord}
+      />
     </>
   );
 }

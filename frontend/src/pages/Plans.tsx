@@ -30,6 +30,7 @@ import { Button, ButtonLink } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
 import { FamilyPicker } from '../components/billing/FamilyPicker';
 import { PlanGrid } from '../components/billing/PlanGrid';
+import { BetaPriceNote } from '../components/billing/BetaPriceNote';
 import { TopupPacks } from '../components/billing/TopupPacks';
 import { UsageMeter } from '../components/billing/UsageMeter';
 import { TransparencyNote } from '../components/billing/TransparencyNote';
@@ -181,6 +182,11 @@ export default function Plans() {
 
   // No plan yet means Drive isn't connected, and everyone starts on Free.
   const currentPlanId = account ? (account.plan?.id ?? 'free') : null;
+  // Never appears for a signed-out visitor: meForUser is null until a session exists and /api/me answers.
+  const betaPricing =
+    meForUser?.beta.tester && meForUser.beta.discountPercent > 0 && meForUser.beta.discountCode
+      ? { percent: meForUser.beta.discountPercent, code: meForUser.beta.discountCode }
+      : null;
   const accountCard = account ? (account.plan && account.usage ? 'usage' : 'connect') : null;
   const freeImages = freeImageAllowance(plans);
   const freeDocuments = freeDocumentAllowance(plans);
@@ -390,14 +396,22 @@ export default function Plans() {
               {plans.families.length > 0 && (
                 <FamilyPicker families={plans.families} value={family} onChange={changeFamily} className="mb-10" />
               )}
+              <BetaPriceNote beta={betaPricing} className="mb-8" />
               <PlanGrid
                 plans={plans.plans}
                 family={family}
                 currency={plans.currency}
                 currentPlanId={currentPlanId}
                 signedIn={Boolean(user)}
+                pricesIncludeTax={plans.pricesIncludeTax}
+                beta={betaPricing}
               />
-              <TransparencyNote currency={plans.currency} className="mt-12" />
+              <TransparencyNote
+                currency={plans.currency}
+                pricesIncludeTax={plans.pricesIncludeTax}
+                merchantOfRecord={plans.merchantOfRecord}
+                className="mt-12"
+              />
             </>
           )}
         </section>

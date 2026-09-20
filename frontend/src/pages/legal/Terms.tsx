@@ -9,7 +9,7 @@ const TOC = [
   { id: 'your-content', label: 'Google Drive access & your content' },
   { id: 'ai-output', label: 'AI output' },
   { id: 'acceptable-use', label: 'Acceptable use' },
-  { id: 'plans-billing', label: 'Plans, allowances & billing' },
+  { id: 'plans-billing', label: 'Plans, allowances, payments & billing' },
   { id: 'free-plan', label: 'Free plan' },
   { id: 'suspension-termination', label: 'Suspension & termination' },
   { id: 'third-party-services', label: 'Third-party services' },
@@ -90,16 +90,27 @@ export default function Terms() {
         </ul>
       </LegalSection>
 
-      <LegalSection id="plans-billing" heading="Plans, allowances & billing">
+      <LegalSection id="plans-billing" heading="Plans, allowances, payments & billing">
         <ul className="list-disc space-y-2 pl-5">
           <li>Each plan's process limits, AI-worker limits, and image and document allowances are shown on our{' '}
             <Link to="/plans" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">pricing page</Link>, across our Images, Documents, and Images + Documents plan families. Any plan can run either kind of work process.
           </li>
           <li>When an allowance runs out, sorting pauses until it resets or you add an image or document pack — we never charge overage fees.</li>
-          <li>Prices are listed in USD; taxes are calculated at checkout.</li>
-          <li>Paid subscriptions renew automatically until cancelled.</li>
+          <li>
+            Prices are listed in USD and exclude VAT and sales tax. Lemon Squeezy (Sold through Link, LLC, formerly
+            Lemon Squeezy LLC, a Utah limited liability company), our Merchant of Record, adds the tax for your country
+            at checkout and shows the total before you pay.
+          </li>
+          <li>
+            Lemon Squeezy is our Merchant of Record for every paid plan and pack: it sells to you, handles payment and
+            invoicing, and your contract of sale for that purchase is with Lemon Squeezy, not DeltaCo Creatives. See
+            Lemon Squeezy's own{' '}
+            <a className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60" href="https://www.lemonsqueezy.com/terms" target="_blank" rel="noreferrer">Terms</a>{' '}
+            and{' '}
+            <a className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60" href="https://www.lemonsqueezy.com/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.
+          </li>
+          <li>Paid subscriptions renew automatically until cancelled. Cancel any time and keep access until the end of the period you already paid for.</li>
           <li>We'll announce price changes at least 30 days before they take effect.</li>
-          <li>Once checkout is live, payments will be handled by a Merchant of Record on our behalf.</li>
           <li>Refunds are governed by our <Link to="/refunds" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">Refund Policy</Link>.</li>
         </ul>
       </LegalSection>

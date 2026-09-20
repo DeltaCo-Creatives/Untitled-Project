@@ -14,6 +14,12 @@ export function SiteFooter() {
 
         <div className="flex flex-col items-center gap-3 sm:items-end">
           <nav aria-label="Legal" className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm font-bold text-ink-soft sm:justify-end">
+            <Link
+              to="/beta"
+              className="rounded-lg hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60"
+            >
+              Beta access
+            </Link>
             {LEGAL_LINKS.map((link) => (
               <Link
                 key={link.to}

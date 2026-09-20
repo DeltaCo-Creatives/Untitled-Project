@@ -29,3 +29,6 @@ npm-debug.log*
 Thumbs.db
 .idea/
 *.swp
+
+# Personal Claude Code settings (per-machine permissions, not shared)
+.claude/settings.local.json

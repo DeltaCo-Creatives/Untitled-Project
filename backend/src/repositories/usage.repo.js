@@ -31,5 +31,12 @@ export async function schemaProblem() {
     return `The database is missing supabase/migrations/0004_documents.sql (${snapshotError.message}). Run it in the Supabase SQL editor.`;
   }
 
+  // 0005 last: without it the app still sorts files, but every beta route 500s and credit
+  // removals fail with a raw constraint violation instead of a readable message.
+  const { error: betaError } = await supabase.from("beta_signups").select("id").limit(1);
+  if (betaError) {
+    return `The database is missing supabase/migrations/0005_beta.sql (${betaError.message}). Run it in the Supabase SQL editor.`;
+  }
+
   return null;
 }

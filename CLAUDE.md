@@ -35,16 +35,17 @@ Keep all four current when state or setup changes.
   - Image and document packs top up either kind.
   - Usage is metered per kind. Prices are USD placeholders. Everything is in `backend/src/config/plans.js`.
 - **Frontend:** React 19 + Vite + Tailwind. Real Supabase Google login, and every screen is backed by the API (`src/lib/api.ts`).
-  - Public pages: Landing `/`, `/login`, `/plans`, and the legal pages `/privacy`, `/terms`, `/refunds`, `/cookies`, `/data-deletion`.
+  - Public pages: Landing `/`, `/login`, `/plans`, `/beta` (closed-beta sign-up), and the legal pages `/privacy`, `/terms`, `/refunds`, `/cookies`, `/data-deletion`.
   - Protected pages: `/onboarding`, `/dashboard`, `/connect`, `/processes/new`, `/processes/:id`.
   - Pastel "Lavender garden" design system, GSAP animation, cookie consent banner, self-hosted fonts.
+- **Closed beta:** the Google OAuth app is in *Testing* status, so only emails on Google's test-user list (max 100) can sign in at all, and Drive refresh tokens expire every 7 days. `/beta` collects sign-ups into `beta_signups`; the owner sees them on `/dashboard` (gated by `ADMIN_EMAILS`), copies the pending addresses into Google's console by hand — there is no API for that list — and ticks **Added**. That flag also makes the account a beta tester for pricing. Nothing is emailed automatically; no mail provider is wired in, deliberately.
 - **Credentials:** `.env` files are gitignored and don't travel through git. The desktop working copy has real credentials; any other checkout, including cloud sessions, starts blank, and `npm run dev` names what's missing. There are no `.env.example` templates, deliberately; [backend/README.md](backend/README.md) lists every variable.
 - **Not built:**
-  - Checkout and the payment-provider webhook (Lemon Squeezy vs Paddle undecided). Until they exist, plans and credits are set by hand (DeveloperToDo.md §9).
+  - Checkout and the Lemon Squeezy webhook. The provider is chosen and named in the legal pages; only the purchase flow is missing. Until it exists, plans and credits are set by hand (DeveloperToDo.md §5).
   - `helmet`/rate limiting.
   - Re-sorting already-sorted files.
-- **Schema:** production has `0001`–`0003` applied.
-  - `0004_documents.sql` (document processes, per-kind credits, plan families) must be run by the owner **before** the release that uses it is pushed.
+- **Schema:** production has `0001`–`0004` applied.
+  - `0005_beta.sql` (readable `insufficient_credits` errors, the `beta_signups` table) must be run by the owner **before** the release that uses it is pushed.
   - Any new migration must be run by hand in the Supabase SQL editor before deploying code that depends on it; nothing applies migrations automatically.
 - **Production:** deployed from `production`. The frontend is on Vercel at `drivetag-ai.com` and the backend on DigitalOcean at `api.drivetag-ai.com`. Open owner items:
   - The Namecheap DNS fix.
@@ -64,7 +65,7 @@ Keep all four current when state or setup changes.
 - **Database & Auth:** Supabase (PostgreSQL), project `ckskwjtjydaqewwojsfj` — Google login for identity, plus all app tables.
 - **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON. Default model `gemini-3.6-flash` — Google retired `gemini-2.5-flash` for new users, and a stale `GEMINI_MODEL` in a local `.env` overrides the default. The API key's project must have billing enabled: on the free tier Google may use submitted images to improve its products, which the Privacy Policy rules out. User-facing text never names the vendor or model ("advanced AI"); only the Privacy Policy names Google LLC as the AI processor.
 - **Google Drive:** `googleapis` SDK.
-- **Payments:** Lemon Squeezy or Paddle (Merchant of Record). *Not integrated yet.*
+- **Payments:** Lemon Squeezy (Merchant of Record — legal entity *Sold through Link, LLC*, formerly Lemon Squeezy LLC). It is the seller of record, collects and remits VAT/sales tax, and handles refunds and chargebacks; DriveTag never sees card data. Named in `/privacy`, `/terms` and `/refunds`. *Checkout not integrated yet.* Prices are **tax-exclusive** — `publicPlansPayload()` says so with `pricesIncludeTax: false`, and the UI must keep saying so next to every price.
 
 Both `frontend/` and `backend/` deploy from the same GitHub repo/branch (`production`) — do not split them into separate repos or branches. `staging` also exists on the remote.
 
@@ -85,6 +86,7 @@ backend/
 │   │   ├── drive.routes.js         folder browser/create, watch lifecycle, legacy single-folder endpoints
 │   │   ├── processes.routes.js     work process CRUD, status, per-process Organize now
 │   │   ├── plans.routes.js         public GET /api/plans
+│   │   ├── beta.routes.js          public closed-beta signup; admin list/patch/CSV behind an email allowlist
 │   │   └── account.routes.js       /api/me (GET, and DELETE = delete account), /api/activity
 │   ├── services/
 │   │   ├── googleAuth.service.js   OAuth client, consent URL, token exchange
@@ -99,6 +101,7 @@ backend/
 │   │   ├── processes.service.js    process validation, folder checks, create-in-Master folders
 │   │   ├── pipeline.service.js     Loop B sweeps, Organize now, per-process AI worker pools, Raw folder status
 │   │   ├── account.service.js      account deletion (disconnect Drive, drop pending grants, delete the auth user)
+│   │   ├── beta.service.js         closed-beta signups: validation, admin allowlist, tester discount, CSV export
 │   │   └── autoSync.service.js     polling fallback for channels Google won't push to
 │   ├── repositories/          one module per table or SQL function group, all Supabase access
 │   └── utils/                 logger (redacting), crypto (AES-GCM + HMAC state), filename (templates), fileDate,
@@ -119,6 +122,7 @@ frontend/src/
 │   ├── ProtectedRoute.tsx
 │   ├── RouteAnalytics.tsx     consent-gated Vercel Analytics + URL redaction; mounts CookieConsent
 │   ├── CookieConsent.tsx      the cookie banner (two equal choices, reopened from the footer)
+│   ├── BetaBanner.tsx         dismissible "closed beta" bar on the landing page (localStorage, try/catch)
 │   ├── SiteFooter.tsx         legal links, "Cookie settings", support email
 │   ├── TagFlowIllustration.tsx, DocumentFlowIllustration.tsx, PageCapIllustration.tsx, MemoryDemo.tsx
 │   │                          animated marketing illustrations (images, documents, the page cap, Zero-Retention)
@@ -127,8 +131,9 @@ frontend/src/
 │   ├── drive/                 FolderBrowser (breadcrumbs, search, new folder), FolderPickerField
 │   ├── processes/             ProcessForm, ProcessKindPicker/Badge + destination, naming, tag field and instruction editors
 │   ├── billing/               FamilyPicker, PlanGrid/PlanCard, TopupPacks, DocumentsExplainer, LandingPricingSection,
-│   │                          TransparencyNote, UsageMeter (both kinds), planFeatures helpers
-│   └── dashboard/             useDashboardData polling + the dashboard's cards (incl. AccountCard: delete account)
+│   │                          TransparencyNote, BetaPriceNote, UsageMeter (both kinds), planFeatures helpers
+│   └── dashboard/             useDashboardData polling + the dashboard's cards (AccountCard: delete account;
+│                              BetaSignupsCard: admin-only sign-up list, shown when /api/me says admin)
 ├── hooks/                     usePressMotion, useReveal, usePlans
 ├── lib/
 │   ├── supabase.ts            anon-key client
@@ -139,10 +144,11 @@ frontend/src/
 │   ├── format.ts, messages.ts
 │   ├── gsap.ts                plugin registration + reduced-motion queries
 │   └── confetti.ts
-└── pages/                     Landing, Login, Plans, Onboarding, Connect, Dashboard, ProcessEditor;
+└── pages/                     Landing, Login, Plans, Beta, Onboarding, Connect, Dashboard, ProcessEditor;
                                legal/ Privacy, Terms, Refunds, Cookies, DataDeletion (+ LegalPage layout)
 
-supabase/migrations/           0001_init.sql, 0002_work_processes.sql, 0003_cleanup.sql, 0004_documents.sql (source of truth)
+supabase/migrations/           0001_init.sql, 0002_work_processes.sql, 0003_cleanup.sql, 0004_documents.sql,
+                               0005_beta.sql (source of truth)
 tests/filename-vectors.json    shared naming-template vectors both filename implementations must pass
 ```
 
@@ -262,6 +268,16 @@ These were deliberate and are easy to "fix" wrongly:
   - It drops any parked Drive-connect grant, then deletes the Supabase auth user. Every user table cascades from `auth.users`.
   - Files in Drive are never touched.
   - The frontend signs out locally even if the server-side sign-out fails, because the account is already gone.
+- **The closed beta is invite-only because Google says so, not because we chose it.** While the OAuth app is in *Testing* status Google caps the tester list at 100, expires refresh tokens after 7 days, and refuses sign-in to anyone not on the list. `GOOGLE_APP_TESTING=true` turns on the dashboard's reconnect warning (shown from day 5 of `driveConnectedAt`); **set it to `false` the day verification is granted**, or every user is told about an expiry that no longer applies.
+- **`beta_signups` is deliberately not tied to `auth.users`.** People sign up before they have an account, and some never create one, so there is no foreign key and deleting an account does not touch a sign-up. The Privacy Policy promises a sign-up can be deleted on request, which is why `service_role` holds `delete` on that table.
+- **One flag, not two.** `added_to_google` means both "I pasted this address into Google's test-user list" and "this account gets the beta price". A second approval flag would be one more thing to forget; the owner ticks one box.
+- **Admin is an environment allowlist and fails closed.** `ADMIN_EMAILS` is compared against `req.user.email`, which comes from Supabase's verified token. An empty list means nobody is an admin, including the owner. The frontend's `me.admin` only decides whether to *render* the card; every admin route re-checks server-side.
+- **The beta discount lives in Lemon Squeezy, not in our billing code.** The backend only says *whether* a signed-in tester may see a percentage and a code (`BETA_DISCOUNT_PERCENT` + `BETA_DISCOUNT_CODE`, both required). Neither value ever reaches a non-tester's `/api/me`. Unset either and the feature disappears from the UI — that is the off switch.
+- **The signup upsert deliberately omits `added_to_google` and `notes`**, so someone re-submitting the form cannot reset their own tester status or wipe the owner's notes.
+- **The public signup is validated *before* the rate limit is charged.** The 5-per-hour budget exists to protect the table, and a rejected body never reaches it — charging someone for mistyping their own email would lock them out for an hour over a typo. The limiter is an in-memory Map, single-instance, pruned on every write.
+- **The admin CSV neutralizes spreadsheet formulas.** `name` and `notes` come from a public form and the file is opened by the owner, so a cell starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe (CSV injection, CWE-1236). Escaping quotes and commas is not enough.
+- **`betaStatusFor` never fails the dashboard.** `GET /api/me` is the dashboard's whole load and polls every 3 seconds while sorting; a hiccup reading `beta_signups` degrades to "not a tester" and logs a warning rather than 500-ing the page. `/me` also stopped decrypting the Drive refresh token just to test existence — `getCredentialStatus` reads only `updated_at`, which is what the reconnect warning needs anyway.
+- **Prices are quoted tax-exclusive.** Lemon Squeezy is the Merchant of Record and adds the buyer's local VAT or sales tax at checkout, so `publicPlansPayload()` carries `pricesIncludeTax: false` and the UI must keep saying "Excludes VAT/sales tax" next to every price rather than hard-coding that sentence's truth.
 - **Legal pages are code, and must match the code.** `/privacy`, `/terms`, `/refunds`, `/cookies` and `/data-deletion` describe exactly what the backend stores and does, including Google's required Limited Use sentence.
   - Change them when data handling, providers, storage keys or refund terms change.
   - The Google OAuth consent screen links to `/privacy` and `/terms`.
@@ -309,6 +325,10 @@ From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && v
 | POST | `/api/auth/google/complete` | Bearer, must be the user who started the flow |
 | DELETE | `/api/auth/google` | Bearer |
 | GET | `/api/plans` | none |
+| POST | `/api/beta/signups` | none (public form; 5/hour per IP) |
+| GET | `/api/beta/signups` | Bearer + `ADMIN_EMAILS` |
+| PATCH | `/api/beta/signups/:id` | Bearer + `ADMIN_EMAILS` |
+| GET | `/api/beta/signups.csv` | Bearer + `ADMIN_EMAILS` |
 | GET/POST | `/api/drive/folders` (`?q`, `?parentId`, `?pageToken`; POST creates a folder) | Bearer |
 | GET | `/api/drive/folders/:id/path` | Bearer |
 | GET/POST/DELETE | `/api/drive/watch` | Bearer |

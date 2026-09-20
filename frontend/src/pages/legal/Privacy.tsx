@@ -77,6 +77,13 @@ export default function Privacy() {
             <strong>Activity ledger</strong> — for each file DriveTag processes: the Drive file id, original file name, new file name, whether it's an image or a document, the AI's classification fields (subject, style and genre for images; document type, topic, the organization or person it's from or for, and the date shown on the document for documents), any custom field values, the destination it was sorted to, its status, any error message, and timestamps. We keep this so you can see your sorting history in the dashboard, and so a file is never sorted twice. The organization/person field and custom fields can contain names taken from the text of your documents — this is personal data, and we keep it for the life of your account, the same as the rest of this ledger, and delete it when you delete your account.
           </li>
           <li><strong>Plan and usage</strong> — your plan, subscription status, image and document usage counters, and (once payments exist) purchase references for credit top-ups.</li>
+          <li>
+            <strong>Beta sign-up</strong> — if you request access to our closed beta, we store your name, email, what
+            you do, roughly how many files a week, and the time you gave consent. We use it to invite you to the beta
+            and add you to the tester list in our Google Cloud project, and keep it until the beta ends or you ask us
+            to delete it — see <Link to="/data-deletion" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">Data deletion</Link>.
+            A sign-up isn't tied to a DriveTag account, since you can request access before creating one.
+          </li>
           <li><strong>Browser storage</strong> — your Supabase sign-in session and your cookie/analytics choice, both in your browser's local storage. See our{' '}
             <Link to="/cookies" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">Cookie Policy</Link> for details.
           </li>
@@ -162,11 +169,17 @@ export default function Privacy() {
           <li><strong>Vercel</strong> — hosts our website and, only with your consent, provides cookieless Web Analytics.</li>
           <li><strong>Google LLC</strong> — Google sign-in, the Google Drive API, and AI processing (Google's generative AI API).</li>
           <li><strong>Namecheap</strong> — our domain and email forwarding for our support addresses.</li>
+          <li>
+            <strong>Lemon Squeezy</strong> (Sold through Link, LLC, formerly Lemon Squeezy LLC, a Utah limited
+            liability company) — our Merchant of Record for paid plans and packs, once checkout opens. It receives your name,
+            email, billing address and country, and processes your card details itself — DriveTag never sees them —
+            to handle payment, invoicing, and sales-tax/VAT collection and remittance. See{' '}
+            <a className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60" href="https://www.lemonsqueezy.com/privacy" target="_blank" rel="noreferrer">Lemon Squeezy's Privacy Policy</a>.
+          </li>
         </ul>
         <p>
-          <strong>Payments:</strong> checkout is not live yet. Once paid plans launch, a Merchant of Record will
-          handle checkout, card data, tax and invoicing on our behalf, and we will name that provider here before
-          checkout opens. DriveTag never sees your full card number.
+          Checkout itself is not live yet — see our <Link to="/plans" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">pricing page</Link>. Once it opens, buying a plan or pack means Lemon Squeezy sells it to you as Merchant of Record, as described in our{' '}
+          <Link to="/terms" className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">Terms of Service</Link>.
         </p>
         <p>We never sell or rent your personal information to anyone.</p>
       </LegalSection>

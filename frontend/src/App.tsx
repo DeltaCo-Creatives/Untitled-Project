@@ -8,6 +8,7 @@ import { SiteFooter } from './components/SiteFooter';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Plans from './pages/Plans';
+import Beta from './pages/Beta';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import Connect from './pages/Connect';
@@ -34,6 +35,7 @@ function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
           <Route path="/plans" element={<Plans />} />
+          <Route path="/beta" element={<Beta />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/refunds" element={<Refunds />} />

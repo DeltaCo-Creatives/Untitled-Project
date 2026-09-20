@@ -113,6 +113,13 @@ export default function Login() {
               {redirecting ? 'Opening Google…' : 'Continue with Google'}
             </Button>
             <p className="mt-3 text-center text-xs leading-relaxed text-ink-soft">
+              Not on the tester list yet?{' '}
+              <Link to="/beta" className="font-semibold text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
+                Request beta access
+              </Link>
+              .
+            </p>
+            <p className="mt-3 text-center text-xs leading-relaxed text-ink-soft">
               By continuing, you agree to our{' '}
               <Link to="/terms" className="font-semibold text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60">
                 Terms of Service

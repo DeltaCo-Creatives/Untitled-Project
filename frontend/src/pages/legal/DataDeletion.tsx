@@ -4,6 +4,7 @@ import LegalPage, { LegalSection } from './LegalPage';
 const TOC = [
   { id: 'in-app', label: 'Delete in the app' },
   { id: 'by-email', label: 'Delete by email' },
+  { id: 'beta-signup', label: 'Deleting a beta sign-up' },
   { id: 'revoking-google-access', label: 'Revoking Google access separately' },
   { id: 'what-happens-next', label: 'What happens next' },
   { id: 'contact', label: 'Contact us' },
@@ -27,6 +28,16 @@ export default function DataDeletion() {
           <a className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60" href="mailto:privacy@drivetag-ai.com">privacy@drivetag-ai.com</a>{' '}
           from your account's email address and ask us to delete your account. We'll confirm and complete the
           deletion within 30 days — usually much sooner.
+        </p>
+      </LegalSection>
+
+      <LegalSection id="beta-signup" heading="Deleting a beta sign-up">
+        <p>
+          If you requested closed-beta access but never created a DriveTag account, your sign-up isn't tied to one —
+          email{' '}
+          <a className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60" href="mailto:privacy@drivetag-ai.com">privacy@drivetag-ai.com</a>{' '}
+          with the address you signed up with and we'll delete that record on its own. This is separate from account
+          deletion above, and from deleting an account you did go on to create.
         </p>
       </LegalSection>
 
