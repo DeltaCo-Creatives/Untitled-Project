@@ -78,6 +78,8 @@ export interface PlanInfo {
   price: Price;
   /** The plan the pricing page highlights within its family. */
   popular: boolean;
+  /** True once Lemon Squeezy has a variant configured for this plan — gates the buy button. Free is never purchasable. */
+  purchasable: boolean;
 }
 
 export interface PlanFamily {
@@ -90,12 +92,16 @@ export interface TopupPack {
   id: string;
   images: number;
   price: number;
+  /** True once Lemon Squeezy has a variant configured for this pack. */
+  purchasable: boolean;
 }
 
 export interface DocumentPack {
   id: string;
   documents: number;
   price: number;
+  /** True once Lemon Squeezy has a variant configured for this pack. */
+  purchasable: boolean;
 }
 
 /** What the AI reads from each document, and the size limits, as shown on the pricing page. */
@@ -132,6 +138,12 @@ export interface PlansResponse {
   pricesIncludeTax: boolean;
   /** e.g. "Lemon Squeezy". null while no payment provider is wired up. */
   merchantOfRecord: string | null;
+  /**
+   * True once checkout is actually configured server-side (a Lemon Squeezy store plus at least one variant).
+   * Normalized to false when absent, so an older backend that predates checkout keeps every buy button showing
+   * "Coming soon" exactly as it does today.
+   */
+  checkoutEnabled: boolean;
 }
 
 export interface CurrentPlan {
@@ -545,6 +557,10 @@ function withKindUsage(me: MeResponse): MeResponse {
 function withPlanFamilies(body: PlansResponse): PlansResponse {
   return {
     ...body,
+    // Deploy-window safety: Vercel usually finishes before DigitalOcean, so an in-flight deploy can still be
+    // served by a backend that predates checkout. Defaulting both to false keeps every buy button saying
+    // "Coming soon", exactly like today, until the new backend is actually live.
+    checkoutEnabled: body.checkoutEnabled ?? false,
     families: body.families ?? [],
     plans: body.plans.map((plan) => ({
       ...plan,
@@ -552,8 +568,10 @@ function withPlanFamilies(body: PlansResponse): PlansResponse {
       tier: plan.tier ?? (plan.id as PlanTier),
       freeDocuments: plan.freeDocuments ?? 0,
       monthlyDocuments: plan.monthlyDocuments ?? 0,
+      purchasable: plan.purchasable ?? false,
     })),
-    documentPacks: body.documentPacks ?? [],
+    topupPacks: (body.topupPacks ?? []).map((pack) => ({ ...pack, purchasable: pack.purchasable ?? false })),
+    documentPacks: (body.documentPacks ?? []).map((pack) => ({ ...pack, purchasable: pack.purchasable ?? false })),
     fileLimits: body.fileLimits ?? { documentMaxMb: 20, pagesRead: 5, textChars: 12000, editingGraceMinutes: 10 },
     pricesIncludeTax: body.pricesIncludeTax ?? false,
     merchantOfRecord: body.merchantOfRecord ?? null,
@@ -566,6 +584,13 @@ export const api = {
     request<{ activity: ActivityEntry[] }>(`/api/activity${query({ limit, processId })}`),
 
   plans: () => request<PlansResponse>('/api/plans').then(withPlanFamilies),
+
+  /**
+   * `item` is a plan id or pack id from GET /api/plans; `billing` only matters when `item` is a plan.
+   * 503 `checkout_unconfigured` when Lemon Squeezy isn't set up, 400 `unknown_item` for an unrecognized id.
+   */
+  createCheckout: ({ item, billing }: { item: string; billing?: BillingInterval }) =>
+    request<{ url: string }>('/api/checkout', { method: 'POST', body: JSON.stringify({ item, billing }) }),
 
   startGoogleAuth: () => request<{ authUrl: string }>('/api/auth/google/start', { method: 'POST' }),
   /**

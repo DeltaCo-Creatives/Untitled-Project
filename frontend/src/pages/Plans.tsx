@@ -44,7 +44,7 @@ interface FaqItem {
   answer: string;
 }
 
-function faqItems(freeImages: number, freeDocuments: number, fileLimits: { pagesRead: number; textChars: number; documentMaxMb: number; editingGraceMinutes: number }): FaqItem[] {
+function faqItems(freeImages: number, freeDocuments: number, fileLimits: { pagesRead: number; textChars: number; documentMaxMb: number; editingGraceMinutes: number }, checkoutEnabled: boolean): FaqItem[] {
   return [
     {
       icon: Images,
@@ -91,7 +91,9 @@ function faqItems(freeImages: number, freeDocuments: number, fileLimits: { pages
       icon: CreditCard,
       bubble: 'bg-butter-soft',
       question: 'Can I cancel anytime?',
-      answer: `Payments launch soon, so there’s nothing to pay for or cancel yet. Free needs no credit card, and your ${formatCount(freeImages)} free images and ${formatCount(freeDocuments)} free documents have no time limit.`,
+      answer: checkoutEnabled
+        ? `Yes. Cancel from your Lemon Squeezy receipt or by emailing support@drivetag-ai.com, and you keep everything you’ve paid for until the end of that billing period — we don’t cut you off the moment you cancel. Free needs no credit card, and your ${formatCount(freeImages)} free images and ${formatCount(freeDocuments)} free documents have no time limit.`
+        : `Payments launch soon, so there’s nothing to pay for or cancel yet. Free needs no credit card, and your ${formatCount(freeImages)} free images and ${formatCount(freeDocuments)} free documents have no time limit.`,
     },
   ];
 }
@@ -191,7 +193,7 @@ export default function Plans() {
   const freeImages = freeImageAllowance(plans);
   const freeDocuments = freeDocumentAllowance(plans);
   const fileLimits = plans?.fileLimits ?? DEFAULT_FILE_LIMITS;
-  const faq = faqItems(freeImages, freeDocuments, fileLimits);
+  const faq = faqItems(freeImages, freeDocuments, fileLimits, Boolean(plans?.checkoutEnabled));
 
   useReveal(pageRef, [Boolean(plans)]);
 
@@ -262,7 +264,8 @@ export default function Plans() {
         <section className="mx-auto max-w-3xl px-4 pb-12 pt-12 text-center sm:pt-16">
           <p className="plans-badge mb-6 inline-flex items-center gap-2 rounded-full border border-line bg-white px-4 py-1.5 text-xs font-bold shadow-soft">
             <Clock3 className="h-3.5 w-3.5 text-lavender-deep" aria-hidden />
-            Paid plans launch soon · Free works today
+            {/* Never advertise "launching soon" next to a live buy button. */}
+            {plans?.checkoutEnabled ? 'Free works today · no card needed to start' : 'Paid plans launch soon · Free works today'}
           </p>
           <h1 className="plans-title mb-5 text-4xl font-bold leading-[1.08] tracking-tight sm:text-6xl">
             Plans that grow with{' '}
@@ -441,7 +444,12 @@ export default function Plans() {
               <div>
                 <h3 className="mb-5 text-center text-xl font-bold tracking-tight">Document packs</h3>
                 <TopupPacks
-                  packs={plans.documentPacks.map((pack) => ({ id: pack.id, images: pack.documents, price: pack.price }))}
+                  packs={plans.documentPacks.map((pack) => ({
+                    id: pack.id,
+                    images: pack.documents,
+                    price: pack.price,
+                    purchasable: pack.purchasable,
+                  }))}
                   currency={plans.currency}
                   unitLabel="document"
                 />

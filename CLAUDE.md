@@ -19,18 +19,23 @@ It's then sent to the Gemini Flash API for classification, and the file is renam
 
 ## Current State
 
-Live — but **the deployed build is behind the code**. Status, plans and the pricing strategy are in [README.md](README.md).
+Production-ready and live. The deployed build is the last committed release; a whole **checkout release** now sits uncommitted on top of it (below). Status, plans and the pricing strategy are in [README.md](README.md).
 - Setup, env vars, credentials, database helpers, deployment and operations are in [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md).
 - Everything only the owner can do (migrations, DNS, Google, hosting settings) is in [DeveloperToDo.md](DeveloperToDo.md).
 
 Keep all four current when state or setup changes.
 
-**Branch reality as of 2026-09-20 — read this before assuming anything below is live:**
-- `origin/staging` (`c3d6635`) holds the whole closed-beta + Lemon Squeezy + VAT release: frontend, backend, `0005_beta.sql`, tests, docs. It is complete and committed. `npm test` in `backend/` is 152 tests across 10 test files, all passing; `npx tsc -b` in `frontend/` is clean and `npm run lint` shows only the pre-existing AuthContext fast-refresh warning.
-- `origin/production` (`76eb2a6`) is the *older* code, and both Vercel and DigitalOcean build from it. So the live site has no `/beta` page and no VAT line, and the live API has no `/api/beta/*` and no `pricesIncludeTax`. Verified 2026-09-20: `GET https://api.drivetag-ai.com/api/plans` returns no `pricesIncludeTax` field, and `POST /api/beta/signups` answers `401 {"error":"Missing bearer token"}` — the request falls past a router that doesn't exist there onto `accountRouter`.
-- `origin/production` also carries five accidental debug files: `backend/h.json`, `backend/m.json`, `backend/p.json`, `frontend/r2.json`, `frontend/r3.json`. They are saved curl outputs (a `/health` body, an expired-token error, an `/api/plans` dump, a Supabase auth-settings dump, a PKCE `flow_state_not_found` error). Nothing reads them, they are not fixtures, and they should be deleted — not maintained.
-- On top of `c3d6635`, `frontend/src/pages/Beta.tsx` has two **uncommitted** fixes in the working tree: the auth-shaped error mapping and the new-tab consent link, both described under **Non-obvious design decisions**. Commit them with the release.
-- Shipping this release is: run `0005_beta.sql` in Supabase, set the new DigitalOcean variables, **then** merge `staging` into `production`. Order matters; the long form is DeveloperToDo.md §1.
+**Branch reality as of 2026-09-20:**
+- The closed-beta + Lemon Squeezy-naming + VAT release **shipped**. `production` is at `392236b` (remove accidental debug JSON files), reached via `540af6b` (beta release docs and form fixes) → `f851715` (merge `staging` into `production`) → `392236b`. The working copy is checked out on **`staging`**, whose ref still sits at `540af6b`: `540af6b` is an ancestor of `392236b` and `git diff 540af6b 392236b` is empty, so the two trees are identical and only staging's ref lags. The five accidental debug JSON files are gone, and `.claude/settings.local.json` is untracked with a `.gitignore` rule in place.
+- Live and verified 2026-09-20: `GET https://api.drivetag-ai.com/api/plans` serves `pricesIncludeTax` and `merchantOfRecord`, `POST /api/beta/signups` answers `{"received":true}`, and the deployed frontend bundle contains `/beta`.
+- `npm test` in `backend/` is **205 tests across 14 test files, all passing**; `npx tsc -b` in `frontend/` is clean, `npm run lint` shows only the pre-existing AuthContext fast-refresh warning, and the production build succeeds.
+- **Uncommitted in the working tree — the whole checkout release.** Done and tested, but **not committed, not deployed, and its migration has not been run**. Nothing in it is live; the site and API still run `392236b`. It is:
+  - **Lemon Squeezy checkout and webhook.** `POST /api/checkout` builds a plain buy link; `POST /webhook/lemonsqueezy` verifies an `X-Signature` HMAC and applies orders, refunds and subscription events. New: `backend/src/routes/checkout.routes.js`, `backend/src/routes/lemonSqueezyWebhook.routes.js`, `backend/src/services/lemonSqueezy.service.js`, `supabase/migrations/0006_checkout.sql`, and on the frontend `lib/lemonSqueezy.ts`, `pages/CheckoutSuccess.tsx`, `components/billing/ReceiptPrint.tsx`.
+  - **Hardening:** `helmet` mounted first in `app.js`, and the beta route's limiter extracted to `backend/src/middleware/rateLimit.js` and applied app-wide on `/api`.
+  - **`schemaProblem()` fixed** — an auth-shaped Supabase error now names `SUPABASE_SERVICE_ROLE_KEY` instead of blaming a migration.
+  - `backend/src/config/plans.js` lowers `aiPerProcess` (Creator 3→2, Studio 5→3, Enterprise 15→10), plus the `purchasable` / `checkoutEnabled` fields on `GET /api/plans`.
+  - All five docs — `README.md`, `CLAUDE.md`, `DeveloperToDo.md`, `backend/README.md`, `frontend/README.md`.
+- **A real purchase has never been tested.** Signature verification, every event handler, idempotency, the refund clamp and link building are all unit-tested; an actual card payment through a live Lemon Squeezy store is not, and can't be until the owner creates the store. Nothing about this release should be treated as proven against the real provider.
 
 - **Backend:** Drive OAuth, the watch-channel lifecycle, the change-feed sweep, AI classification and rename/move are wired together.
   - Users build **AI work processes** of two kinds, `image` or `document`, chosen at creation and never changed.
@@ -39,6 +44,9 @@ Keep all four current when state or setup changes.
   - Also included: a polling fallback, "Organize now" for files already in Raw, and self-service account deletion (`DELETE /api/me`).
 - **Plans:** Free plus three families (Images, Documents, Images + Documents) × three tiers (Creator / Studio / Enterprise).
   - Tiers set processes and AI workers per process; families set the monthly image and/or document allowances.
+  - AI workers per process: Free 1, Creator 2, Studio 3, Enterprise 10 (working tree; the deployed backend still serves the old 3 / 5 / 15 until it is redeployed).
+  - **`aiPerProcess` is a speed knob, not a cost knob.** It appears in exactly one functional place in the backend — the concurrency limit in `runProcessQueue` (`backend/src/services/pipeline.service.js:364`) — and never touches the charging SQL, the credit reservation or the AI request config. Every file costs the same single AI call whatever the worker count, so changing it moves throughput and peak memory, never unit economics or the margin tables in README.md.
+  - **Never advertise a number above `MAX_CONCURRENT_AI_JOBS`.** The server-wide semaphore bounds real concurrency, so a bigger tier number is a promise the server can't keep. `MAX_CONCURRENT_AI_JOBS` is recommended at `10` on a 1 GB instance (DeveloperToDo.md §7; the code default is `20`) — that's a recommendation, not a reading of the deployed value, so confirm what DigitalOcean is actually set to before relying on it. It's why Enterprise was set to 10 — the old 15 was never deliverable above a 10 cap. If the deployed value is 10, Enterprise's 10 workers exactly equal that cap, and the semaphore is FIFO rather than fair across users, so one Enterprise customer can occupy every slot: before selling an Enterprise seat, confirm the deployed value, then move to 2 GB and raise the cap to 20 if it's still 10 (about 360 MB of buffers in flight).
   - Image and document packs top up either kind.
   - Usage is metered per kind. Prices are USD placeholders. Everything is in `backend/src/config/plans.js`.
 - **Frontend:** React 19 + Vite + Tailwind. Real Supabase Google login, and every screen is backed by the API (`src/lib/api.ts`).
@@ -48,20 +56,18 @@ Keep all four current when state or setup changes.
 - **Closed beta:** the Google OAuth app is in *Testing* status, so only emails on Google's test-user list (max 100) can sign in at all, and Drive refresh tokens expire every 7 days. `/beta` collects sign-ups into `beta_signups`; the owner sees them on `/dashboard` (gated by `ADMIN_EMAILS`), copies the pending addresses into Google's console by hand — there is no API for that list — and ticks **Added**. That flag also makes the account a beta tester for pricing. Nothing is emailed automatically; no mail provider is wired in, deliberately.
 - **Credentials:** `.env` files are gitignored and don't travel through git. The desktop working copy has real credentials; any other checkout, including cloud sessions, starts blank, and `npm run dev` names what's missing. There are no `.env.example` templates, deliberately; [backend/README.md](backend/README.md) lists every variable.
 - **Supabase API keys — moved off the legacy JWTs.** The project now uses Supabase's new key format: `sb_publishable_…` in the browser, `sb_secret_…` on the server. The variable *names* are unchanged — `VITE_SUPABASE_ANON_KEY`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` — only the values.
-  - Local `frontend/.env` and `backend/.env` are migrated. The live frontend bundle already ships the publishable key: verified 2026-09-20, zero legacy JWTs in the bundle and that key returns HTTP 200 from Supabase's `/auth/v1/settings`, so browser auth works today.
-  - **Not verified: what `SUPABASE_SERVICE_ROLE_KEY` is set to on DigitalOcean.** Judge that variable by its **`sb_secret_` prefix, never by length** — a legacy JWT is also long. If it is still an `eyJ…` key when legacy keys are disabled in Supabase, every `/api/*` request fails with "Invalid or expired token" and all sorting stops, while `/health` stays green and nothing alerts.
-  - Known trap in that failure: `schemaProblem()` in `backend/src/repositories/usage.repo.js` blames the *first* failing Supabase RPC on a missing migration, so a dead key prints `The database is missing supabase/migrations/0002_work_processes.sql (Invalid API key)` and sends the owner to re-run a migration that has been applied for months. Unfixed — it's on Claude's list under **Open tasks**.
+  - The migration is complete on both sides: local `.env` files, the live frontend bundle (publishable key) and the DigitalOcean backend (`sb_secret_`). Judge that server variable by its **`sb_secret_` prefix, never by length** — a legacy JWT is also long.
+  - Former trap, **fixed in the uncommitted release**: `schemaProblem()` in `backend/src/repositories/usage.repo.js` used to blame the *first* failing Supabase RPC on a missing migration, so a dead key printed `The database is missing supabase/migrations/0002_work_processes.sql (Invalid API key)` and sent the owner to re-run a migration applied months ago. It now matches an auth-shaped message (`AUTH_ERROR_PATTERN`: invalid api key / JWT / legacy keys disabled / permission denied / unauthorized) and names `SUPABASE_SERVICE_ROLE_KEY` instead. The deployed backend still has the old behaviour until this release ships.
 - **Not built:**
-  - Checkout and the Lemon Squeezy webhook. The provider is chosen and named in the legal pages; only the purchase flow is missing. Until it exists, plans and credits are set by hand (DeveloperToDo.md §5).
-  - `helmet`, and rate limiting beyond `POST /api/beta/signups` (which has a 5-per-IP-per-hour in-memory limiter).
   - Re-sorting already-sorted files.
-- **Schema:** production has `0001`–`0004` applied. **`0005_beta.sql` has not been run in Supabase yet** (checked 2026-09-20).
-  - It is written and covered by the PGlite suite: readable `insufficient_credits` errors from `grant_credits`, the `beta_signups` table, and the `admin_mark_beta_added` owner helper.
-  - The owner must run it **before** the release that uses it is pushed. Push first and every beta route 500s.
-  - Any new migration must be run by hand in the Supabase SQL editor before deploying code that depends on it; nothing applies migrations automatically.
-- **Production:** deployed from `production`, which is currently behind `staging` (see the branch block above). The frontend is on Vercel at `drivetag-ai.com` and the backend on DigitalOcean at `api.drivetag-ai.com`. Open owner items:
-  - Run `0005_beta.sql`, then merge `staging` into `production`.
-  - Set the release's new DigitalOcean variables: `ADMIN_EMAILS`, `GOOGLE_APP_TESTING`, `BETA_DISCOUNT_PERCENT`, `BETA_DISCOUNT_CODE`.
+  - Yearly billing in the UI. The plan config carries a yearly price for the six non-Enterprise paid plans and the checkout API accepts `billing: 'yearly'`, but the buy button always sends `'monthly'` and the receipt prices off `price.monthly` to match.
+  - The legacy-endpoint cleanup, deliberately **kept out of the checkout release** so that rolling it back is unambiguous.
+- **Schema:** production has `0001`–`0005` applied. `0005_beta.sql` was run in Supabase on 2026-09-20, so the beta routes and `grant_credits`'s readable `insufficient_credits` errors are live.
+  - **`0006_checkout.sql` is written but has NOT been run.** It must be run by the owner *before* the checkout release is pushed, or `POST /webhook/lemonsqueezy` 500s on every subscription event (`apply_subscription_state` won't exist) and a redelivered order raises a raw unique violation instead of being deduped.
+  - Any new migration must be run by hand in the Supabase SQL editor before deploying code that depends on it; nothing applies migrations automatically. Deploy code first and the routes that need it 500.
+- **Production:** deployed from `production`. The frontend is on Vercel at `drivetag-ai.com` and the backend on DigitalOcean at `api.drivetag-ai.com`.
+  - ✅ **DNS incident, resolved 2026-09-20: the apex briefly pointed at Lemon Squeezy as well as Vercel.** A second `A` record for `@` → `3.33.255.208` was added alongside Vercel's `216.198.79.1`; `8.8.8.8` returned the Lemon Squeezy address first, and it answered HTTP 403 for the domain, so a large share of visitors got an error page while the owner's cached resolver showed a healthy site. The owner deleted the Lemon Squeezy record the same day — verified 2026-09-20: `nslookup drivetag-ai.com 8.8.8.8` returns only `216.198.79.1`, and `curl https://drivetag-ai.com/` answered `200` three times out of three. Full story and the standing rule it left behind (never point the apex at Lemon Squeezy): DeveloperToDo.md §2.1. `www` and `api` were unaffected.
+  - `ADMIN_EMAILS` is set; `GOOGLE_APP_TESTING`, `BETA_DISCOUNT_PERCENT`, `BETA_DISCOUNT_CODE` and all three `LEMONSQUEEZY_*` variables are still unset. Every one of them fails closed, so the checkout release can be deployed before the store exists: `/api/plans` reports `checkoutEnabled: false` and `purchasable: false` everywhere, every button stays "Coming soon", `POST /api/checkout` answers 503, and the webhook 503s.
   - Google domain verification is recorded done (Search Console + Cloud; the Namecheap records are settled — DeveloperToDo.md §7). Check whether Drive watches now register, then move `AUTO_SYNC_INTERVAL_SECONDS` to `0`. Until that's confirmed, sorting runs on the polling fallback.
   - The rest are in DeveloperToDo.md, and summarised under **Open tasks** at the end of this file.
 
@@ -78,9 +84,20 @@ Keep all four current when state or setup changes.
 - **Database & Auth:** Supabase (PostgreSQL), project `ckskwjtjydaqewwojsfj` — Google login for identity, plus all app tables.
 - **AI Engine:** Gemini Flash via `@google/genai`, with a `responseSchema` for strict JSON. Default model `gemini-3.6-flash` — Google retired `gemini-2.5-flash` for new users, and a stale `GEMINI_MODEL` in a local `.env` overrides the default. The API key's project must have billing enabled: on the free tier Google may use submitted images to improve its products, which the Privacy Policy rules out. User-facing text never names the vendor or model ("advanced AI"); only the Privacy Policy names Google LLC as the AI processor.
 - **Google Drive:** `googleapis` SDK.
-- **Payments:** Lemon Squeezy (Merchant of Record — legal entity *Sold through Link, LLC*, formerly Lemon Squeezy LLC). It is the seller of record, collects and remits VAT/sales tax, and handles refunds and chargebacks; DriveTag never sees card data. Named in `/privacy`, `/terms` and `/refunds`. **No checkout exists yet** — every plan and pack button says "Coming soon", and plans and credits are set by hand (DeveloperToDo.md §5). What Claude needs from the owner before it can be built is under **Open tasks**. Prices are **tax-exclusive** — `publicPlansPayload()` says so with `pricesIncludeTax: false`, and the UI must keep saying so next to every price.
+- **Payments:** Lemon Squeezy (Merchant of Record — legal entity *Sold through Link, LLC*, formerly Lemon Squeezy LLC). It is the seller of record, collects and remits VAT/sales tax, and handles refunds and chargebacks; DriveTag never sees card data. Named in `/privacy`, `/terms` and `/refunds`. Prices are **tax-exclusive** — `publicPlansPayload()` says so with `pricesIncludeTax: false`, and the UI must keep saying so next to every price.
+  - **Checkout and the webhook now exist in code** (uncommitted, undeployed, and never run against a real store). Two halves: **outbound**, `POST /api/checkout` → a plain buy link carrying `checkout[custom][user_id]`, **no API key involved anywhere**; and **inbound**, `POST /webhook/lemonsqueezy`, which verifies an `X-Signature` HMAC over the **raw** body and applies orders, refunds and subscription events. Read the Lemon Squeezy entries under **Non-obvious design decisions** before touching either.
+  - Until the owner creates the store and sets `LEMONSQUEEZY_*`, nothing is purchasable, every button stays "Coming soon", and plans and credits are still set by hand (DeveloperToDo.md §5).
+  - Three new backend env vars, **all optional and all failing closed** (full list in [backend/README.md](backend/README.md)):
 
-Both `frontend/` and `backend/` deploy from the same GitHub repo/branch (`production`) — do not split them into separate repos or branches. Work lands on `staging` first and is merged into `production` to release; right now `production` is a whole release behind, so "what the code says" and "what's live" are two different answers (see **Current State**). Within a single merge Vercel usually finishes before DigitalOcean, which is why `api.ts` keeps normalizers for older API responses and why `/beta` maps auth-shaped errors to "this server is too old".
+    | Var | Meaning |
+    |---|---|
+    | `LEMONSQUEEZY_STORE` | store subdomain slug, e.g. `drivetag` |
+    | `LEMONSQUEEZY_VARIANTS` | JSON map of our plan/pack id → variant id, e.g. `{"creator":"111","creator-yearly":"112","pack-250":"210"}`. Yearly keys are `<planId>-yearly`. Parsed into a null-prototype object; unparseable ⇒ treated as none and logged once |
+    | `LEMONSQUEEZY_WEBHOOK_SECRET` | webhook signing secret; empty ⇒ `POST /webhook/lemonsqueezy` 503s every request |
+
+    Checkout links need `LEMONSQUEEZY_STORE` **and** at least one variant (`env.lemonSqueezy.configured`); the webhook needs only the secret. Setting one of store/variants without the other is reported at boot as a "Production config problem".
+
+Both `frontend/` and `backend/` deploy from the same GitHub repo/branch (`production`) — do not split them into separate repos or branches. Work lands on `staging` first and is merged into `production` to release; their trees are currently identical, though staging's ref still sits one commit behind (see **Branch reality**). Within a single merge Vercel usually finishes before DigitalOcean, which is why `api.ts` keeps normalizers for older API responses and why `/beta` maps auth-shaped errors to "this server is too old".
 
 ## Architecture
 
@@ -92,14 +109,17 @@ backend/
 │   ├── config/env.js          dotenv + typed config + assertRequiredEnv()
 │   ├── config/plans.js        every plan limit, top-up pack and per-process editing limit
 │   ├── lib/supabase.js        service-role client (bypasses RLS — server only)
-│   ├── middleware/            requireAuth (Supabase token), errorHandler
+│   ├── middleware/            requireAuth (Supabase token), errorHandler,
+│   │                          rateLimit.js (sliding-window factory: { windowMs, max, key? })
 │   ├── routes/
 │   │   ├── driveWebhook.routes.js  POST /webhook/drive
+│   │   ├── lemonSqueezyWebhook.routes.js  POST /webhook/lemonsqueezy — raw body, HMAC, verify-then-work-then-ack
 │   │   ├── auth.routes.js          Drive OAuth start/callback/disconnect
 │   │   ├── drive.routes.js         folder browser/create, watch lifecycle, legacy single-folder endpoints
 │   │   ├── processes.routes.js     work process CRUD, status, per-process Organize now
 │   │   ├── plans.routes.js         public GET /api/plans
 │   │   ├── beta.routes.js          public closed-beta signup; admin list/patch/CSV behind an email allowlist
+│   │   ├── checkout.routes.js      POST /api/checkout → a Lemon Squeezy buy link for a plan or pack
 │   │   └── account.routes.js       /api/me (GET, and DELETE = delete account), /api/activity
 │   ├── services/
 │   │   ├── googleAuth.service.js   OAuth client, consent URL, token exchange
@@ -115,6 +135,8 @@ backend/
 │   │   ├── pipeline.service.js     Loop B sweeps, Organize now, per-process AI worker pools, Raw folder status
 │   │   ├── account.service.js      account deletion (disconnect Drive, drop pending grants, delete the auth user)
 │   │   ├── beta.service.js         closed-beta signups: validation, admin allowlist, tester discount, CSV export
+│   │   ├── lemonSqueezy.service.js variant lookup both ways, checkout-link building, X-Signature HMAC verify,
+│   │   │                           their subscription status -> ours. No API key, no network calls.
 │   │   └── autoSync.service.js     polling fallback for channels Google won't push to
 │   ├── repositories/          one module per table or SQL function group, all Supabase access
 │   └── utils/                 logger (redacting), crypto (AES-GCM + HMAC state), filename (templates), fileDate,
@@ -144,7 +166,8 @@ frontend/src/
 │   ├── drive/                 FolderBrowser (breadcrumbs, search, new folder), FolderPickerField
 │   ├── processes/             ProcessForm, ProcessKindPicker/Badge + destination, naming, tag field and instruction editors
 │   ├── billing/               FamilyPicker, PlanGrid/PlanCard, TopupPacks, DocumentsExplainer, LandingPricingSection,
-│   │                          TransparencyNote, BetaPriceNote, UsageMeter (both kinds), planFeatures helpers
+│   │                          TransparencyNote, BetaPriceNote, UsageMeter (both kinds), planFeatures helpers,
+│   │                          ReceiptPrint (the printing-receipt confirmation graphic)
 │   └── dashboard/             useDashboardData polling + the dashboard's cards (AccountCard: delete account;
 │                              BetaSignupsCard: admin-only sign-up list, shown when /api/me says admin)
 ├── hooks/                     usePressMotion, useReveal, usePlans
@@ -154,14 +177,17 @@ frontend/src/
 │   │                          normalizers for an older backend mid-deploy)
 │   ├── filename.ts            naming-template mirror of backend/src/utils/filename.js for the live preview
 │   ├── consent.ts             analytics consent storage + the events the banner and footer use
+│   ├── lemonSqueezy.ts        lazy lemon.js overlay loader with a redirect fallback; the
+│   │                          drivetag-pending-checkout sessionStorage handoff
 │   ├── format.ts, messages.ts
 │   ├── gsap.ts                plugin registration + reduced-motion queries
 │   └── confetti.ts
-└── pages/                     Landing, Login, Plans, Beta, Onboarding, Connect, Dashboard, ProcessEditor;
+└── pages/                     Landing, Login, Plans, Beta, Onboarding, Connect, Dashboard, ProcessEditor,
+                               CheckoutSuccess (/checkout/success — confirms from /api/me, never the query string);
                                legal/ Privacy, Terms, Refunds, Cookies, DataDeletion (+ LegalPage layout)
 
 supabase/migrations/           0001_init.sql, 0002_work_processes.sql, 0003_cleanup.sql, 0004_documents.sql,
-                               0005_beta.sql (source of truth)
+                               0005_beta.sql, 0006_checkout.sql (source of truth; 0006 not yet run in Supabase)
 tests/filename-vectors.json    shared naming-template vectors both filename implementations must pass
 ```
 
@@ -233,7 +259,8 @@ These were deliberate and are easy to "fix" wrongly:
   - A sweep fast-forwards only when *every* kind that has a runnable process is out of credits. Files of an exhausted kind come back "blocked" and wait in Raw.
   - The SQL function `complete_processed_file_v2` does three things in one transaction: re-checks the `claimed_at` fence, charges one credit of the file's kind (free → monthly → top-up → `overage`), and marks the file completed.
 - **0004 is expand-only.** The v1 `complete_processed_file`, `image_usage` and `grant_image_credits` stay for the previous backend during a deploy; v1 now also resets the document period counter.
-  - The new backend calls `usage_snapshot`, `complete_processed_file_v2` and `grant_credits`, and `schemaProblem()` logs loudly if 0004 is missing.
+  - The new backend calls `usage_snapshot`, `complete_processed_file_v2` and `grant_credits`, and `schemaProblem()` logs loudly if 0004 is missing. It now probes 0002 → 0004 → 0005 → 0006 in that order, since each builds on the last and the earliest missing one is the real problem.
+  - **The 0006 probe is a deliberately invalid write.** `apply_subscription_state` writes, so unlike the others it can't be probed with a harmless read. It's called with the plan id `__schema_probe__`, which `subscriptions_plan_check` always rejects, so the insert can never succeed no matter which user id is passed and nothing is ever persisted. A function that exists therefore *always* errors — only PostgREST's own "no such function" (or an auth-shaped error) is treated as meaningful. Relying on the user-id foreign key to fail instead would leave a boot-time write that only fails by luck.
   - Drop the v1 functions only in a later migration, after the cleanup release.
   - The frontend's `api.ts` normalizes old API responses (missing `kind`, family, document usage) because Vercel usually finishes deploying before DigitalOcean. Don't remove those normalizers.
   - Failed files are never charged, so there are no refunds, and a taken-over claim can't be charged twice.
@@ -242,7 +269,7 @@ These were deliberate and are easy to "fix" wrongly:
   - The per-user single slot (`inFlight`) still allows one sweep or "Organize now" at a time.
   - Inside a run, each process gets a manager (`runProcessQueue`). It de-duplicates files by id and runs them through a pool of `plan.aiPerProcess` workers.
   - Different processes run concurrently.
-  - A server-wide FIFO semaphore (`MAX_CONCURRENT_AI_JOBS`, default 20) bounds simultaneous download+classify steps. It exists for memory, since each step holds an image buffer, and for the AI rate limit. It isn't fair across users (ponytail-noted).
+  - A server-wide FIFO semaphore (`MAX_CONCURRENT_AI_JOBS`, default 20; DeveloperToDo.md §7 recommends `10` on a 1 GB instance, though nobody has confirmed the deployed value) bounds simultaneous download+classify steps. It exists for memory, since each step holds an image buffer, and for the AI rate limit. It isn't fair across users (ponytail-noted), so if the deployed value is 10, a tier whose `aiPerProcess` equals that cap can starve everyone else — see the **Plans** bullet in **Current State**.
   - The DB claim stays the duplicate guard.
   - `complete_processed_file` locks the subscription row `FOR UPDATE`, so concurrent charges can't lose an increment.
   - Live counts reach the dashboard as `workers` in `GET /api/processes/status`.
@@ -263,6 +290,9 @@ These were deliberate and are easy to "fix" wrongly:
 - **Gemini gets fixed rules in `systemInstruction`, and owner settings as labelled JSON data.** Destinations are an enum of slugged keys plus `unsorted`, decided after the descriptive fields. Unknown keys fall back to Unsorted, and text inside an image is treated as image content.
 - **Legacy single-folder support is transitional.** `/api/drive/config`, `/raw-status`, `/organize` and `/api/me`'s `config`/`subscription`/`entitled` fields remain as shims mapped onto the user's first work process; they never touch `folder_configs`. Production has already run `0003_cleanup.sql`, which dropped `folder_configs`, its sync trigger, the `trialing` status and `trial_ends_at`. So the remaining cleanup is code only: delete the shims.
 - **Routers that must be public mount before `accountRouter`** in `app.js`. Its `router.use(requireAuth)` runs for every `/api/*` request that reaches it.
+- **`app.js`'s middleware order is deliberate, top to bottom.** `helmet` first, so its security headers wrap *every* response including CORS refusals and errors; then `cors()`; then the Lemon Squeezy webhook on the raw body; then `express.json()`; then the `/api` rate limit. `contentSecurityPolicy: false` is explicit and correct — this is a JSON-only API on its own subdomain serving no HTML of its own, so a CSP here would be dead weight rather than a defense. Everything else in helmet's defaults still applies.
+  - The app-wide limit is 300 requests per IP per minute and is **scoped to `/api`**, which is what keeps `/webhook/drive` and `/webhook/lemonsqueezy` out of it.
+  - `app.set("trust proxy", 1)` matters for this: without it every request behind DigitalOcean's load balancer shares one `req.ip` and the whole world rate-limits as a single client.
 - **Expected errors use `utils/httpError.js`.** `errorHandler` shows `error`, `code` and `details` only for errors marked `expose` (HttpError, malformed JSON), including in production. Anything else becomes "Internal server error".
 - **Drive-connect returns to the origin that started it.** `POST /api/auth/google/start` signs the request's `Origin` into the OAuth `state`, provided `utils/origins.js` allows it, and the callback redirects there. Dev CORS allows any `localhost` port; production uses `CORS_ORIGINS` only, so `NODE_ENV=production` must be set when deployed.
 - **The OAuth callback never stores the Drive grant.** The signed `state` proves DriveTag issued the flow, but not *who* finished Google's consent screen. Storing the grant under `state.userId` would let anyone send a victim their own consent link and attach the victim's Drive to the sender's account.
@@ -287,14 +317,35 @@ These were deliberate and are easy to "fix" wrongly:
 - **Admin is an environment allowlist and fails closed.** `ADMIN_EMAILS` is compared against `req.user.email`, which comes from Supabase's verified token. An empty list means nobody is an admin, including the owner. The frontend's `me.admin` only decides whether to *render* the card; every admin route re-checks server-side.
 - **The beta discount lives in Lemon Squeezy, not in our billing code.** The backend only says *whether* a signed-in tester may see a percentage and a code (`BETA_DISCOUNT_PERCENT` + `BETA_DISCOUNT_CODE`, both required). Neither value ever reaches a non-tester's `/api/me`. Unset either and the feature disappears from the UI — that is the off switch.
 - **The signup upsert deliberately omits `added_to_google` and `notes`**, so someone re-submitting the form cannot reset their own tester status or wipe the owner's notes.
-- **The public signup is validated *before* the rate limit is charged.** The 5-per-hour budget exists to protect the table, and a rejected body never reaches it — charging someone for mistyping their own email would lock them out for an hour over a typo. The limiter is an in-memory Map, single-instance, pruned on every write.
+- **The public signup is validated *before* the rate limit is charged.** The 5-per-hour budget exists to protect the table, and a rejected body never reaches it — charging someone for mistyping their own email would lock them out for an hour over a typo. The limiter now comes from the shared `middleware/rateLimit.js` factory — an in-memory Map, single-instance, pruned across all keys on every write. Its `{ windowMs, max, key? }` signature is depended on by both `app.js` and `beta.routes.js`; a multi-instance backend would need a shared store instead.
 - **`/beta`'s signup call reads an auth-shaped status as "this backend is too old".** The POST is public and sends no token, so 401/403/404/405 back from it cannot mean "you aren't signed in" — it can only mean the server predates `/api/beta/*`. On the older backend that path falls past the router that would mount it and lands on `accountRouter`'s `requireAuth`, which answers "Missing bearer token": accurate, useless, and not the visitor's problem to solve. `pages/Beta.tsx` keeps an `AUTH_SHAPED` set of those four statuses and shows "Beta sign-up isn't live on this server yet…" plus the support address instead.
   - `lib/messages.ts`'s `errorMessage` only recognises the 404 `No route for` shape, which is why this one is handled at the call site rather than in the shared helper.
-  - This is not hypothetical: it is exactly what the deployed backend does today.
+  - This is not hypothetical: it is exactly what the deployed backend did before this release shipped, and it is what any backend still mid-deploy does while Vercel is ahead of DigitalOcean.
 - **The consent checkbox's Privacy Policy link opens in a new tab** (`target="_blank"` + `rel="noreferrer"`, with a visually-hidden "(opens in a new tab)" so it isn't a surprise). Reading what you're agreeing to should not cost you the half-filled form behind it.
 - **The admin CSV neutralizes spreadsheet formulas.** `name` and `notes` come from a public form and the file is opened by the owner, so a cell starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe (CSV injection, CWE-1236). Escaping quotes and commas is not enough.
 - **`betaStatusFor` never fails the dashboard.** `GET /api/me` is the dashboard's whole load and polls every 3 seconds while sorting; a hiccup reading `beta_signups` degrades to "not a tester" and logs a warning rather than 500-ing the page. `/me` also stopped decrypting the Drive refresh token just to test existence — `getCredentialStatus` reads only `updated_at`, which is what the reconnect warning needs anyway.
 - **Prices are quoted tax-exclusive.** Lemon Squeezy is the Merchant of Record and adds the buyer's local VAT or sales tax at checkout, so `publicPlansPayload()` carries `pricesIncludeTax: false` and the UI must keep saying "Excludes VAT/sales tax" next to every price rather than hard-coding that sentence's truth.
+- **"Payments launch soon" copy is gated on `plans.checkoutEnabled`, not hard-coded.** `/plans` used to state flatly that paid plans were coming and that "there's nothing to pay for or cancel yet" — sentences that become false the moment a variant is configured, while a working buy button sits beside them. Both the hero line and the cancellation FAQ now branch on `checkoutEnabled`. Any new sentence about whether payment exists must branch the same way; advertising "launching soon" next to a live buy button is exactly the false claim the project's honesty rule forbids.
+- **`checkoutEnabled` and per-item `purchasable` both normalize to `false` in `api.ts`.** An older backend mid-deploy sends neither field, and defaulting either to `true` would render a buy button that 503s. Failing to "Coming soon" is always the safe direction. A plan is `purchasable` only once `LEMONSQUEEZY_VARIANTS` maps its id; Free never is. Signed-out visitors see a purchasable plan link to `/login`, not to checkout.
+- **Lemon Squeezy outbound: a plain buy link, and no API key anywhere.** `POST /api/checkout` returns `https://<store>.lemonsqueezy.com/checkout/buy/<variantId>?checkout[custom][user_id]=<uid>&checkout[email]=<email>`. Plain buy links need no credentials, so none are stored — there is deliberately no `LEMONSQUEEZY_API_KEY`. The REST API (`POST /v1/checkouts`) is only for bespoke checkouts (custom expiry, per-customer pricing); don't add it, and the key it would need, without a reason.
+  - **`checkout[custom][user_id]` is the whole mapping, and it is added server-side.** It comes back in the webhook at `meta.custom_data.user_id` and is the only thing tying a payment to a DriveTag account. `checkoutUrlFor` *throws* rather than build a URL without one — a link missing it produces a paid order nobody can be credited for.
+  - **Their "Domains" setting is for *their* pages, not ours.** It re-hosts the Lemon Squeezy storefront and checkout under your own domain. It has nothing to do with serving the DriveTag app, which is why pointing the apex at it collided with Vercel and took the marketing site down for anyone whose resolver picked their IP (DeveloperToDo.md §2.1). It is entirely optional, and a branded address must be a subdomain like `checkout.drivetag-ai.com` — **never the apex**.
+- **The Lemon Squeezy webhook is mounted before `express.json()`, and that is load-bearing.** The `X-Signature` header is an HMAC-SHA256 of the **exact request bytes**. `app.js` mounts `/webhook/lemonsqueezy` at line 42 with `express.raw({ type: "application/json" })`; the global `app.use(express.json())` is line 44. Move the mount below it and the parser consumes the body, the router re-serializes a different byte string, and *every* delivery verifies as forged — a silent, total payment outage that looks like an attack. The Drive webhook is unaffected: it authenticates with a shared-secret header, not a body hash.
+  - `verifySignature` length-checks before `crypto.timingSafeEqual`, which **throws** on unequal-length buffers. A missing, short or non-hex header returns `false`, never a 500.
+  - The app-wide `/api` rate limit does not apply: **both webhook paths are outside `/api` by design.** Google and Lemon Squeezy legitimately burst, and rate-limiting a payment webhook loses money.
+- **This webhook does the work BEFORE acking — the exact opposite of the Drive one, on purpose.** The Drive webhook acks in `setImmediate` because Google wants a fast 200 and a missed notification is recoverable (the changes feed or "Organize now" finds the file again). A missed *payment* is not recoverable: acking first means a transient database error drops someone's credits with nothing left to retry it, and the only trace is a log line nobody reads. So: verify, dispatch, then `200` on success and **`500` on failure**, which makes Lemon Squeezy redeliver (3 more times, ~5 s / 25 s / 125 s). Every handler is idempotent, and that idempotency is the only reason a redelivery is safe — don't add a handler that isn't.
+  - A **verified** request that simply cannot be acted on — malformed JSON, no `meta.custom_data.user_id`, an event we don't handle — still returns `200`. Retrying would never fix any of those, and a non-2xx would retry forever.
+  - An **unverified** request is never 200'd: bad signature is `401`, and a missing `LEMONSQUEEZY_WEBHOOK_SECRET` is `503`.
+- **`cancelled` maps to `active`, and only `subscription_expired` downgrades.** Lemon Squeezy's "cancelled" means *will not renew*, not *access revoked* — the customer keeps what they paid for until `ends_at`, which is exactly what `/terms` promises. `mapStatus`: `on_trial`/`active` → `active`, `past_due`/`unpaid` → `past_due`, **`cancelled` → `active`**, `paused` → `cancelled`, `expired` → `expired`. Getting this backwards cuts off people who have already paid for the current period. `subscription_cancelled` therefore re-applies the same plan and status and only refreshes `current_period_end`.
+- **Purchase and refund use deliberately DIFFERENT grant references.** `grant_credits` in `0006` no-ops when `p_reference` already exists, which is what makes a redelivered order safe. If a refund reused the order's reference, that guard would swallow **every** clawback silently. So an order grants under `ls-order-<id>` and its refund removes under `ls-refund-<id>` — same order id, different namespace, both individually idempotent.
+  - The idempotency check sits **after** `select … for update`, not before it. Checked before the lock, two overlapping redeliveries would both find no existing grant, both proceed, and the loser would hit `provider_reference`'s unique index and raise — a spurious 500 that triggers yet another retry. Under the lock they serialise on the user's subscription row.
+  - A clawback that would take the balance below zero raises `insufficient_credits`; the webhook **catches it and still 200s**. The customer already spent those credits, there is nothing left to take back, and that is the correct commercial outcome — not an error to retry forever.
+  - `apply_subscription_state` uses `coalesce(excluded.x, s.x)` for the provider columns and `current_period_end`, so an event carrying no customer id cannot erase one an earlier event stored. `period_anchor` moves only when the plan actually changed or a restart was asked for, mirroring `admin_set_plan`. Status and plan are validated by catching the live table constraints, never a second hard-coded list.
+- **Variant lookup guards against prototype keys.** The item id arrives in a request body, so `variants[itemId]` on a plain object would resolve `__proto__`, `constructor` or `toString` to inherited members of `Object.prototype`, sail past a `!variantId` check and return a 200 with a nonsense checkout URL. Two guards, both needed: the item must be something we actually sell (`Object.hasOwn(PLANS, …)` or a real pack), and the variant must be an own key. `LEMONSQUEEZY_VARIANTS` is also parsed into a **null-prototype** object, so the map is safe by construction. Unparseable JSON there is treated as "no variants" and logged once, never a boot crash.
+- **`/checkout/success` confirms from `GET /api/me`, never from the query string**, and a before/after diff alone is **not sufficient**. The webhook is a server-to-server call that routinely lands *before* the browser gets redirected back, so the very first `/api/me` read already contains the purchase, every later delta is zero, and a diff-only page leaves a paying customer on "confirming" forever. The buy button therefore records the chosen item in `sessionStorage` under **`drivetag-pending-checkout`** (`lib/lemonSqueezy.ts`, `rememberPendingCheckout`), and the page confirms by matching `me.plan.id` to it — **checked before the baseline is taken, and on every poll**. Packs still use a delta, because their id isn't a plan id.
+  - `sessionStorage`, not `localStorage`: one tab, one browsing session, which is exactly the lifetime of one checkout. Every access is wrapped in try/catch — it throws in private mode and with site data blocked, and a storage failure must never stop someone buying. Without it the page falls back to the delta.
+  - The stored value is only ever used to *recognise* the purchase, never to display anything, so a tampered value can at worst delay confirmation. It can never put a plan name or a number on the receipt.
+  - It is browser storage, so **the Cookie Policy (`pages/legal/Cookies.tsx`) must list it** — the standing rule is in the analytics-consent entry above. **It is not listed there yet**; that is item 2 on Claude's list under **Open tasks**.
 - **Legal pages are code, and must match the code.** `/privacy`, `/terms`, `/refunds`, `/cookies` and `/data-deletion` describe exactly what the backend stores and does, including Google's required Limited Use sentence.
   - Change them when data handling, providers, storage keys or refund terms change.
   - The Google OAuth consent screen links to `/privacy` and `/terms`.
@@ -302,6 +353,8 @@ These were deliberate and are easy to "fix" wrongly:
 - **Full `drive` scope is required**, not `drive.file` — the app must read files other people drop in the folder. This makes the app subject to Google restricted-scope verification and an annual CASA security assessment; see backend/README.md.
 - **The frontend dev server uses `strictPort` on 5173.** Supabase's redirect allowlist names that origin, and silently drifting to 5174 used to break every API call with a bare "Failed to fetch". Dev CORS now tolerates other localhost ports too, but keep `strictPort` so there's one canonical dev origin.
 - **`@gsap/react` doesn't revert between dependency changes by default.** Pass `revertOnUpdate: true` to `useGSAP` whenever a dependency-driven effect starts looping or stateful animations, or they stack up.
+- **Tailwind v4's `rotate-*` / `scale-*` emit standalone `rotate` and `scale` properties, which *compose* with GSAP's `transform` rather than being replaced by it.** So a GSAP `rotation` value is applied **relative to** the class's resting rotation, not instead of it. The receipt stamp (`components/billing/ReceiptPrint.tsx`) rests at `rotate-[-8deg]` and animates to GSAP `rotation: 0`, which lands on the intended -8deg; animating to `rotation: -8` stacked into -16deg under motion while reduced-motion visitors correctly rested at -8. If a GSAP rotation or scale looks doubled, check for a Tailwind utility of the same name on the element before touching the tween.
+  - Same file, separate rule: **the PAID stamp lives in a reserved right gutter (`pr-24`) of the footer row, not absolutely positioned over the paper.** Overlaid, it covered the subtotal figure. A stamp that can obscure a money value is a bug, not a style preference — verified down to 375px.
 - **The Drive webhook needs a Google-verified domain.** Drive refuses to register a watch on an address whose domain isn't verified in the Cloud project, so free ngrok URLs and `*.ondigitalocean.app` can't receive notifications. Production uses `api.drivetag-ai.com`. It needs `drivetag-ai.com` verified in Search Console, with a TXT record on host `@`, before watches can switch from polling to webhooks.
 
 ## Commands
@@ -329,6 +382,10 @@ From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && v
 - entitlement;
 - the organize route;
 - account deletion;
+- the checkout route and link building (including `__proto__` / `constructor` as item ids);
+- the Lemon Squeezy webhook — signature verification, every event handler, idempotency, the refund clamp;
+- the rate-limit middleware;
+- `schemaProblem()` telling an auth error apart from a missing migration;
 - the real SQL migrations in PGlite (charging, rollover, grants, plan ids, kind immutability). Everything else is verified with manual probes, curl and browser checks. Name new test files `*.test.js` under `backend/test/`; the script is scoped there so it never picks up `scripts/test-gemini.js`, which makes a real, billed AI call.
 
 ## API surface
@@ -337,6 +394,7 @@ From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && v
 |---|---|---|
 | GET | `/health` | none |
 | POST | `/webhook/drive` | `X-Goog-Channel-Token` shared secret |
+| POST | `/webhook/lemonsqueezy` | `X-Signature` HMAC-SHA256 over the raw body (mounted before `express.json()`; exempt from the `/api` rate limit) |
 | POST | `/api/auth/google/start` | Bearer (Supabase) |
 | GET | `/api/auth/google/callback` | signed `state` param (parks the grant; stores nothing) |
 | POST | `/api/auth/google/complete` | Bearer, must be the user who started the flow |
@@ -353,6 +411,7 @@ From `frontend/`: `npm run dev` (Vite, port 5173), `npm run build` (`tsc -b && v
 | GET | `/api/processes/status` | Bearer |
 | GET/PUT/PATCH/DELETE | `/api/processes/:id` | Bearer |
 | POST | `/api/processes/:id/organize` (402 `out_of_images` / `out_of_documents`) | Bearer |
+| POST | `/api/checkout` — body `{ item, billing? }` → `{ url }`; 503 `checkout_unconfigured`, 400 `unknown_item` | Bearer |
 | GET | `/api/me` | Bearer |
 | DELETE | `/api/me` (body `{ "confirm": "DELETE" }`) — delete account | Bearer |
 | GET | `/api/activity` (`?processId`) | Bearer |
@@ -376,22 +435,22 @@ Two lists, and they are not interchangeable. The first is code, and is what the 
 
 ### What Claude does next (code)
 
-1. **Lemon Squeezy checkout.** Blocked on the owner's IDs and keys (owner item 5 below). Then: hosted-checkout links from the plan cards and top-up packs; `POST /webhook/lemonsqueezy` with HMAC signature verification; handlers for `order_created`, `subscription_created`, `subscription_updated`, `subscription_cancelled` and `subscription_expired`. Packs call `grant_credits(...)`; subscriptions set `subscriptions.plan`, `status` and `period_anchor`. Plan ids come from `backend/src/config/plans.js` — a Lemon Squeezy variant named after its plan id is what makes the webhook mapping unambiguous.
-2. **Fix `schemaProblem()`** in `backend/src/repositories/usage.repo.js`. It attributes *any* Supabase RPC error to a missing migration, so an auth failure reads as "run 0002" — the worst possible advice during an outage. Tell an auth/permission error apart from a missing function before naming a migration.
-3. **Delete the five debug JSON files** from `production` (`backend/h.json`, `backend/m.json`, `backend/p.json`, `frontend/r2.json`, `frontend/r3.json`) as part of the merge — or do it yourself with the `git rm` in DeveloperToDo.md §1.1.
-4. **Delete the legacy shims** — `/api/drive/config`, `/api/drive/raw-status`, `/api/drive/organize`, and `/api/me`'s `config` / `subscription` / `entitled` fields. `0003_cleanup.sql` already ran; what's left is code only.
+1. **Commit the checkout release** sitting uncommitted in the working tree — the whole set listed under **Branch reality** above, code and all five `.md` files. Nothing in it is live until it is committed, merged to `production` and redeployed, **and `0006_checkout.sql` has been run first** (owner item 1).
+2. ~~Add `drivetag-pending-checkout` to the Cookie Policy~~ — **done**, it is listed in `frontend/src/pages/legal/Cookies.tsx` alongside the analytics and beta-banner keys, with a note that it is session storage and so is dropped when the tab closes. The standing rule stands: anything the app writes to a visitor's browser appears on that page, cookie or not.
+3. **Delete the legacy shims** — `/api/drive/config`, `/api/drive/raw-status`, `/api/drive/organize`, and `/api/me`'s `config` / `subscription` / `entitled` fields. `0003_cleanup.sql` already ran; what's left is code only. Kept deliberately **out** of the checkout release so a rollback of that release is unambiguous — do this as its own change, after checkout has shipped and settled.
+4. **Yearly billing in the UI.** The plan config already carries a yearly price for the six non-Enterprise paid plans, `POST /api/checkout` already accepts `billing: 'yearly'`, and `variantFor` already looks up `<planId>-yearly`. What's missing is a monthly/yearly toggle on the plan cards; today the button always sends `'monthly'`, and `buildReceipt()` in `pages/CheckoutSuccess.tsx` prices off `planInfo.price.monthly` to match — change both together or the receipt will lie. (`ReceiptPrint` itself never prices anything; it takes pre-formatted strings.)
 5. **Drop the v1 SQL functions** (`complete_processed_file`, `image_usage`, `grant_image_credits`) in a later migration, once the cleanup release is deployed on both hosts.
-6. **Add `helmet` and rate limiting.** Today only `POST /api/beta/signups` is limited, by an in-memory single-instance Map.
-7. **Re-sorting already-sorted files.** Not built; the ledger is unique on `(user_id, file_id)`, so a design decision is needed before code.
+6. **Re-sorting already-sorted files.** Not built; the ledger is unique on `(user_id, file_id)`, so a design decision is needed before code.
 
 ### What only the owner can do
 
-1. **Run `0005_beta.sql`** in the Supabase SQL editor — before pushing, not after.
-2. **Merge `staging` into `production`**, so the live site and API actually get the closed-beta / Lemon Squeezy / VAT release.
-3. **Set the new DigitalOcean variables**: `ADMIN_EMAILS` (empty = nobody is an admin, including you), `GOOGLE_APP_TESTING`, `BETA_DISCOUNT_PERCENT`, `BETA_DISCOUNT_CODE` (the last two are both required for the discount to appear at all).
-4. **Confirm `SUPABASE_SERVICE_ROLE_KEY` on DigitalOcean starts with `sb_secret_`** *before* disabling legacy keys in Supabase. If it doesn't, the whole API dies quietly behind a green `/health` — see the Supabase API keys bullet in **Current State**.
-5. **Hand over the Lemon Squeezy details** so checkout can be built: the Store ID (Settings → General); one Variant ID per purchasable thing — 9 paid plans, of which 6 also have a yearly price (the Enterprise tiers are monthly only), plus the 6 top-up packs; an API key (Settings → API); and a webhook signing secret (Settings → Webhooks). Name each variant after its plan id.
-6. **Do not point the apex domain at Lemon Squeezy.** `drivetag-ai.com`'s A record stays on Vercel; a checkout subdomain with a CNAME is the correct move (DeveloperToDo.md §2.1).
-7. **Confirm Drive watches now register.** Google domain verification (Search Console + Cloud) is recorded done, and the Namecheap records, including the TXT on host `@`, are settled (DeveloperToDo.md §7). Check whether webhooks now work and, if so, move `AUTO_SYNC_INTERVAL_SECONDS` to `0`; until confirmed, sorting stays on the polling fallback.
-8. **Google OAuth verification.** Until it's granted the app stays in *Testing*: 100 testers maximum, refresh tokens expiring every 7 days, and nobody off the list can sign in. Paste beta sign-ups into Google's test-user list by hand and tick **Added** on the dashboard. The day verification lands, set `GOOGLE_APP_TESTING=false`.
-9. **Check the Vercel environment-variable scopes.** A build failed on 2026-09-20 with "Missing VITE_API_URL"; the variable itself is fixed, but all three `VITE_*` vars were documented as Production-only, so a Preview build will fail the same way until they're scoped to Preview too.
+1. **Run `0006_checkout.sql`** in the Supabase SQL editor — **before** the checkout release is deployed, not after. Nothing applies it automatically.
+2. **Create the Lemon Squeezy store, products and variants.** 21 variants: 9 paid plans, 6 of which also have a yearly price (the Enterprise tiers are monthly only), plus the 6 top-up packs. **Name each variant after its plan or pack id** — that name is what makes the webhook's variant→plan mapping unambiguous. No API key is needed; plain buy links use none. DeveloperToDo.md §2.
+3. **Set the three `LEMONSQUEEZY_*` variables on DigitalOcean** — `LEMONSQUEEZY_STORE`, `LEMONSQUEEZY_VARIANTS`, `LEMONSQUEEZY_WEBHOOK_SECRET` (see the Payments table under **Tech Stack**). All three fail closed, so the release can ship before they're set.
+4. **Create the webhook endpoint** at `https://api.drivetag-ai.com/webhook/lemonsqueezy`, subscribed to `order_created`, `order_refunded`, `subscription_created`, `subscription_updated`, `subscription_payment_success`, `subscription_payment_failed`, `subscription_cancelled` and `subscription_expired`, and put its signing secret in `LEMONSQUEEZY_WEBHOOK_SECRET`.
+5. **Make one real test-mode purchase, end to end, before anything goes public.** No real payment has ever run through this code. Everything is unit-tested; nothing is proven against the live provider.
+6. **Redeploy the backend** so the new AI-worker counts (Creator 2, Studio 3, Enterprise 10) actually apply — after the release is committed.
+7. **Set the remaining DigitalOcean variables**: `GOOGLE_APP_TESTING`, and `BETA_DISCOUNT_PERCENT` + `BETA_DISCOUNT_CODE` (both required, or the discount never appears). `ADMIN_EMAILS` is already set. Decide the beta discount first.
+8. **Delete the test sign-up row left behind when the live form was verified**: `delete from public.beta_signups where lower(email) = 't@example.com';` in the Supabase SQL editor.
+9. **Confirm Drive watches now register.** Google domain verification (Search Console + Cloud) is recorded done, and the Namecheap records, including the TXT on host `@`, are settled (DeveloperToDo.md §7). Check whether webhooks now work and, if so, move `AUTO_SYNC_INTERVAL_SECONDS` to `0`; until confirmed, sorting stays on the polling fallback.
+10. **Google brand verification, restricted-scope verification and the CASA assessment.** Until they're granted the app stays in *Testing*: 100 testers maximum, refresh tokens expiring every 7 days, and nobody off the list can sign in. Paste beta sign-ups into Google's test-user list by hand and tick **Added** on the dashboard. The day verification lands, set `GOOGLE_APP_TESTING=false`.

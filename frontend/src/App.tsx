@@ -13,6 +13,7 @@ import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import Connect from './pages/Connect';
 import ProcessEditor from './pages/ProcessEditor';
+import CheckoutSuccess from './pages/CheckoutSuccess';
 import Privacy from './pages/legal/Privacy';
 import Terms from './pages/legal/Terms';
 import Refunds from './pages/legal/Refunds';
@@ -48,6 +49,7 @@ function App() {
             <Route path="/connect" element={<Connect />} />
             <Route path="/processes/new" element={<ProcessEditor />} />
             <Route path="/processes/:id" element={<ProcessEditor />} />
+            <Route path="/checkout/success" element={<CheckoutSuccess />} />
           </Route>
         </Routes>
         <SiteFooter />

@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { logger } from "../utils/logger.js";
 
 // Loaded here, in a module every consumer imports, so env vars are populated
 // before any service module body evaluates. ESM hoists imports, so calling
@@ -31,6 +32,31 @@ function optionalNonNegativeInt(name, fallback) {
   const n = Number(process.env[name]);
   return Number.isInteger(n) && n >= 0 ? n : fallback;
 }
+
+/**
+ * LEMONSQUEEZY_VARIANTS is a JSON object mapping our plan/pack id to a Lemon Squeezy
+ * variant id. Unparseable input is treated as "no variants configured" (fail closed)
+ * rather than crashing boot over a typo'd env var; logged once here so it isn't silent.
+ */
+function parseLemonSqueezyVariants(raw) {
+  // Null prototype throughout: ids are looked up with keys that came from a request body, and a
+  // plain object would resolve "__proto__" or "constructor" to an inherited member instead of
+  // undefined. Callers guard with Object.hasOwn too; this makes the map safe by construction.
+  if (!raw) return Object.create(null);
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return Object.assign(Object.create(null), parsed);
+    }
+  } catch {
+    // falls through to the warning below
+  }
+  logger.warn("LEMONSQUEEZY_VARIANTS is not a valid JSON object; ignoring it", {});
+  return Object.create(null);
+}
+
+const lemonSqueezyStore = optional("LEMONSQUEEZY_STORE", "");
+const lemonSqueezyVariants = parseLemonSqueezyVariants(optional("LEMONSQUEEZY_VARIANTS", ""));
 
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
@@ -105,6 +131,15 @@ export const env = {
     // true while the Google OAuth app is in Testing status: Drive refresh tokens expire every 7 days.
     googleAppTesting: optional("GOOGLE_APP_TESTING", "false") === "true",
   },
+
+  // All optional and fail closed: with any piece missing, checkout links can't be built
+  // (services/lemonSqueezy.service.js's isConfigured()) and the webhook route 503s.
+  lemonSqueezy: {
+    store: lemonSqueezyStore, // store subdomain slug, e.g. "drivetag"
+    variants: lemonSqueezyVariants, // our plan/pack id -> Lemon Squeezy variant id
+    webhookSecret: optional("LEMONSQUEEZY_WEBHOOK_SECRET", ""),
+    configured: Boolean(lemonSqueezyStore) && Object.keys(lemonSqueezyVariants).length > 0,
+  },
 };
 
 const LOCAL_ADDRESS = /localhost|127\.0\.0\.1/;
@@ -130,6 +165,13 @@ export function productionConfigProblems() {
   }
   if (LOCAL_ADDRESS.test(env.google.webhookUrl) || /ngrok|your-subdomain/.test(env.google.webhookUrl)) {
     problems.push(`DRIVE_WEBHOOK_URL is ${env.google.webhookUrl}; Google can't deliver Drive notifications there.`);
+  }
+  const variantCount = Object.keys(env.lemonSqueezy.variants).length;
+  if (env.lemonSqueezy.store && variantCount === 0) {
+    problems.push("LEMONSQUEEZY_STORE is set but LEMONSQUEEZY_VARIANTS has no entries; no checkout link can be built.");
+  }
+  if (!env.lemonSqueezy.store && variantCount > 0) {
+    problems.push("LEMONSQUEEZY_VARIANTS is set but LEMONSQUEEZY_STORE is empty; no checkout link can be built.");
   }
   return problems;
 }

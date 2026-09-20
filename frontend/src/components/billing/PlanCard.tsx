@@ -1,7 +1,9 @@
-import { useId } from 'react';
-import { ArrowRight, BadgeCheck, Building, Check, Clock3, Palette, PiggyBank, Sparkles, Sprout, Users, type LucideIcon } from 'lucide-react';
-import type { PlanInfo, PlanTier } from '../../lib/api';
+import { useId, useState } from 'react';
+import { ArrowRight, BadgeCheck, Building, Check, Clock3, Palette, PiggyBank, RefreshCw, Sparkles, Sprout, Users, type LucideIcon } from 'lucide-react';
+import { api, type PlanInfo, type PlanTier } from '../../lib/api';
 import { plural } from '../../lib/format';
+import { errorMessage } from '../../lib/messages';
+import { openCheckout, rememberPendingCheckout } from '../../lib/lemonSqueezy';
 import { Button, ButtonLink } from '../ui/Button';
 import { PAYMENTS_PENDING_NOTE, formatPrice, isFreePlan, monthsFree, planFeatures } from './planFeatures';
 import type { BetaPricing } from './PlanGrid';
@@ -49,6 +51,29 @@ export function PlanCard({
   const freeMonths = !free && yearly != null ? monthsFree(plan.price.monthly, yearly) : 0;
   const showBeta = !free && Boolean(beta) && plan.price.monthly > 0;
   const betaMonthly = showBeta && beta ? Math.round(plan.price.monthly * (100 - beta.percent)) / 100 : null;
+
+  const canBuy = !free && plan.purchasable;
+  const [buying, setBuying] = useState(false);
+  const [buyError, setBuyError] = useState<string | null>(null);
+
+  // No billing toggle exists on this card today (only the monthly price has a button), so checkout is always
+  // opened for the monthly variant — matches the price the button sits under.
+  const buy = async () => {
+    if (buying) return;
+    setBuyError(null);
+    setBuying(true);
+    try {
+      const { url } = await api.createCheckout({ item: plan.id, billing: 'monthly' });
+      // Recorded before we hand over to Lemon Squeezy: /checkout/success confirms by matching this,
+      // which works even when the webhook lands before the buyer's browser comes back.
+      rememberPendingCheckout(plan.id);
+      await openCheckout(url);
+    } catch (err) {
+      setBuyError(errorMessage(err, 'Couldn’t start checkout. Please try again.'));
+    } finally {
+      setBuying(false);
+    }
+  };
 
   return (
     <article
@@ -148,9 +173,30 @@ export function PlanCard({
             {signedIn ? 'Go to dashboard' : 'Get started free'}
             <ArrowRight className="h-4 w-4" aria-hidden />
           </ButtonLink>
+        ) : canBuy && !signedIn ? (
+          // The server can't attribute a purchase without a user id, so a signed-out visitor goes to sign in first.
+          <ButtonLink to="/login" variant={featured ? 'primary' : 'secondary'} className="w-full">
+            Sign in to subscribe
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </ButtonLink>
+        ) : canBuy ? (
+          <Button
+            variant={featured ? 'primary' : 'secondary'}
+            className="w-full"
+            onClick={buy}
+            disabled={buying}
+            aria-label={`Choose ${plan.label}`}
+          >
+            {buying ? (
+              <RefreshCw className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />
+            ) : (
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            )}
+            {buying ? 'Starting checkout…' : 'Choose plan'}
+          </Button>
         ) : (
-          // No payment provider yet: prices are shown, purchasing isn't. The wrapper carries the tooltip too, since
-          // some browsers skip titles on disabled buttons.
+          // No payment provider yet, or this plan has no variant configured: prices are shown, purchasing isn't.
+          // The wrapper carries the tooltip too, since some browsers skip titles on disabled buttons.
           <span className="block" title={PAYMENTS_PENDING_NOTE}>
             <Button
               disabled
@@ -165,6 +211,11 @@ export function PlanCard({
           </span>
         )}
       </div>
+      {/* Mounted before any error exists, so a screen reader reliably announces the change instead of missing an
+          alert that only appears after the fact. Visually collapses (not display:none) while there's nothing to say. */}
+      <p aria-live="polite" className={buyError ? 'mt-3 text-sm font-semibold text-rose-ink' : 'sr-only'}>
+        {buyError}
+      </p>
     </article>
   );
 }
