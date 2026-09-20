@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 import { HttpError } from "../utils/httpError.js";
 import { isUuid } from "../utils/processValidation.js";
 import { listSignups } from "../repositories/betaSignup.repo.js";
@@ -15,29 +16,14 @@ import {
 const router = Router();
 
 // ---- rate limit: 5 public signups per IP per hour, sliding window ----
-// ponytail: per-instance in-memory Map (no dependency) — bounded because every write sweeps out
-// expired entries across all keys, not just the caller's. A multi-instance backend would need a
-// shared store (Redis) instead; DigitalOcean App Platform runs this as one instance today.
-const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
-const RATE_LIMIT_MAX = 5;
-const submissionsByIp = new Map();
-
-function withinRateLimit(ip) {
-  const now = Date.now();
-  const cutoff = now - RATE_LIMIT_WINDOW_MS;
-
-  for (const [key, timestamps] of submissionsByIp) {
-    const kept = timestamps.filter((t) => t > cutoff);
-    if (kept.length === 0) submissionsByIp.delete(key);
-    else submissionsByIp.set(key, kept);
-  }
-
-  const timestamps = submissionsByIp.get(ip) ?? [];
-  if (timestamps.length >= RATE_LIMIT_MAX) return false;
-  timestamps.push(now);
-  submissionsByIp.set(ip, timestamps);
-  return true;
-}
+// Applied by hand inside the route handler (not as router middleware) because it must run
+// AFTER assertValidSignup below — see the comment there. See middleware/rateLimit.js for the
+// per-instance/Redis ponytail note.
+const signupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: "Too many signups from this address. Try again in a bit.",
+});
 
 /** Must run after requireAuth — req.user.email comes from Supabase's verified token. */
 function requireAdmin(req, res, next) {
@@ -51,9 +37,12 @@ router.post("/signups", async (req, res) => {
   // and a rejected body never reaches it. Charging someone for mistyping their own email would
   // lock them out of signing up for an hour over a typo.
   const signup = assertValidSignup(req.body);
-  if (!withinRateLimit(req.ip)) {
-    throw new HttpError(429, "Too many signups from this address. Try again in a bit.", { code: "rate_limited" });
-  }
+  // signupLimiter is ordinary (req, res, next) middleware; called by hand (rather than mounted
+  // on the route) so it runs after the validation above. It's synchronous, so a next(err) call
+  // here throws straight back out into this async handler for Express to forward to errorHandler.
+  signupLimiter(req, res, (err) => {
+    if (err) throw err;
+  });
   await saveSignup(signup);
   // Same response whether the email was new or already on the list — never disclose which.
   res.status(201).json({ received: true });

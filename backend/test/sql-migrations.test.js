@@ -1,9 +1,9 @@
 // Run from backend/: node --test --experimental-test-module-mocks test/sql-migrations.test.js
 //
 // Applies the real supabase/migrations/*.sql files (0001 -> 0002 -> 0003 -> 0004 -> 0005
-// -> 0004 -> 0005 again) against an in-memory PGlite Postgres and exercises the money-path
-// SQL functions directly, the way the deployed backend calls them via supabase.rpc(...).
-// No .env, no network, no real Supabase project.
+// -> 0006 -> 0004 -> 0005 -> 0006 again) against an in-memory PGlite Postgres and exercises
+// the money-path SQL functions directly, the way the deployed backend calls them via
+// supabase.rpc(...). No .env, no network, no real Supabase project.
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -420,12 +420,12 @@ describe("grant_credits / grant_image_credits / admin_grant_document_credits", (
     await assert.rejects(() => db.query("select public.grant_credits($1, 'video', 10, 'bad kind') as b;", [userId]), /invalid_kind/);
   });
 
-  test("provider_reference stays unique across grants (a payment webhook can only apply once)", async () => {
+  test("provider_reference dedupes a repeated grant instead of erroring (0006: was a raw unique-violation)", async () => {
     const userId = await createUser(db);
     await db.query("select public.grant_credits($1, 'image', 100, 'first', 'purchase', 'order-1') as b;", [userId]);
-    await assert.rejects(() =>
-      db.query("select public.grant_credits($1, 'image', 100, 'duplicate webhook retry', 'purchase', 'order-1') as b;", [userId]),
-    );
+    // Must NOT reject any more: a redelivered webhook event would otherwise 500 forever.
+    const b2 = await db.query("select public.grant_credits($1, 'image', 100, 'duplicate webhook retry', 'purchase', 'order-1') as b;", [userId]);
+    assert.equal(b2.rows[0].b, 100, "a duplicate reference returns the current balance, not a fresh grant");
     const sub = await getSubscription(userId);
     assert.equal(sub.topup_balance, 100, "the duplicate must not have applied");
   });
@@ -685,6 +685,207 @@ describe("grant_credits: readable insufficient_credits error (0005)", () => {
     );
     assert.equal(grants.length, 1);
     assert.equal(grants[0].amount, 30);
+  });
+});
+
+// ---------------------------------------------------------- grant_credits (0006 idempotency)
+
+describe("grant_credits: idempotent on p_reference (0006)", () => {
+  test("granting twice with the same p_reference inserts exactly one row and grants the balance once", async () => {
+    const userId = await createUser(db);
+    const b1 = await db.query(
+      "select public.grant_credits($1, 'image', 100, 'pack purchase', 'purchase', 'ls-order-42') as b;",
+      [userId],
+    );
+    assert.equal(b1.rows[0].b, 100);
+
+    const b2 = await db.query(
+      "select public.grant_credits($1, 'image', 100, 'duplicate webhook retry', 'purchase', 'ls-order-42') as b;",
+      [userId],
+    );
+    assert.equal(b2.rows[0].b, 100, "the redelivered event must return the current balance, not grant again");
+
+    const sub = await getSubscription(userId);
+    assert.equal(sub.topup_balance, 100, "balance must reflect exactly one grant");
+
+    const { rows: grants } = await db.query(
+      "select count(*)::int as n from public.image_credit_grants where provider_reference = 'ls-order-42';",
+    );
+    assert.equal(grants[0].n, 1, "exactly one audit row for this reference, however many times it is delivered");
+  });
+
+  test("a null p_reference is never deduped: repeated manual grants all apply", async () => {
+    const userId = await createUser(db);
+    const b1 = await db.query("select public.grant_credits($1, 'document', 50, 'manual top-up') as b;", [userId]);
+    assert.equal(b1.rows[0].b, 50);
+
+    const b2 = await db.query("select public.grant_credits($1, 'document', 50, 'another manual top-up') as b;", [userId]);
+    assert.equal(b2.rows[0].b, 100, "a null reference must grant again, never be treated as a duplicate");
+
+    const sub = await getSubscription(userId);
+    assert.equal(sub.document_topup_balance, 100);
+
+    const { rows: grants } = await db.query(
+      "select count(*)::int as n from public.image_credit_grants where user_id = $1 and provider_reference is null;",
+      [userId],
+    );
+    assert.equal(grants[0].n, 2, "two separate audit rows for two manual grants");
+  });
+});
+
+// ----------------------------------------------------------------- apply_subscription_state
+
+/** Calls apply_subscription_state with sane defaults, returning the resulting subscriptions row. */
+async function applySubscriptionState(
+  userId,
+  { plan, status, provider = "lemonsqueezy", customerId = "cust-1", subscriptionId = "sub-1", periodEnd = null, restartPeriod = false } = {},
+) {
+  const { rows } = await db.query(
+    `select * from public.apply_subscription_state($1, $2, $3, $4, $5, $6, $7, $8);`,
+    [userId, plan, status, provider, customerId, subscriptionId, periodEnd, restartPeriod],
+  );
+  return rows[0];
+}
+
+describe("apply_subscription_state (0006)", () => {
+  test("a later event with null provider ids keeps the ones an earlier event stored", async () => {
+    const userId = await createUser(db);
+    await applySubscriptionState(userId, {
+      plan: "studio",
+      status: "active",
+      customerId: "cust-42",
+      subscriptionId: "sub-42",
+      periodEnd: "2027-03-01T00:00:00Z",
+      restartPeriod: true,
+    });
+
+    // subscription_payment_success carries a status but not the customer/subscription ids.
+    // Assigning excluded directly would null them out; they must survive.
+    await applySubscriptionState(userId, {
+      plan: "studio",
+      status: "active",
+      provider: null,
+      customerId: null,
+      subscriptionId: null,
+      periodEnd: null,
+    });
+
+    const sub = await getSubscription(userId);
+    assert.equal(sub.provider, "lemonsqueezy", "provider must survive a null");
+    assert.equal(sub.provider_customer_id, "cust-42", "customer id must survive a null");
+    assert.equal(sub.provider_subscription_id, "sub-42", "subscription id must survive a null");
+    assert.equal(
+      new Date(sub.current_period_end).getTime(),
+      new Date("2027-03-01T00:00:00Z").getTime(),
+      "period end must survive a null",
+    );
+  });
+
+  test("inserts a subscriptions row for a user who has none, setting every provider column", async () => {
+    const userId = await createUser(db);
+    const row = await applySubscriptionState(userId, {
+      plan: "creator",
+      status: "active",
+      provider: "lemonsqueezy",
+      customerId: "cust-1",
+      subscriptionId: "sub-1",
+      periodEnd: "2027-01-01T00:00:00Z",
+      restartPeriod: true,
+    });
+
+    assert.equal(row.plan, "creator");
+    assert.equal(row.status, "active");
+    assert.equal(row.provider, "lemonsqueezy");
+    assert.equal(row.provider_customer_id, "cust-1");
+    assert.equal(row.provider_subscription_id, "sub-1");
+    assert.equal(new Date(row.current_period_end).getTime(), new Date("2027-01-01T00:00:00Z").getTime());
+    assert.ok(row.period_anchor, "period_anchor must be set on first insert");
+
+    const sub = await getSubscription(userId);
+    assert.equal(sub.plan, "creator");
+    assert.equal(sub.provider_subscription_id, "sub-1");
+  });
+
+  test("does not move period_anchor on a same-plan call, but moves it when the plan actually changes", async () => {
+    const userId = await createUser(db);
+    const first = await applySubscriptionState(userId, { plan: "creator", status: "active", restartPeriod: true });
+    const firstAnchor = new Date(first.period_anchor).getTime();
+
+    // Same plan, restart = false: anchor must be untouched (byte-identical, not just "close").
+    const same = await applySubscriptionState(userId, { plan: "creator", status: "active", restartPeriod: false });
+    assert.equal(new Date(same.period_anchor).getTime(), firstAnchor, "same plan, no restart: anchor must not move");
+
+    // A tiny real gap so a moved anchor is unambiguously later even at coarse clock resolution.
+    await db.query("select pg_sleep(0.01);");
+
+    // Different plan, restart = false: anchor must move because the plan itself changed.
+    const changed = await applySubscriptionState(userId, { plan: "studio", status: "active", restartPeriod: false });
+    assert.ok(
+      new Date(changed.period_anchor).getTime() > firstAnchor,
+      "plan change must move the anchor forward even without an explicit restart",
+    );
+  });
+
+  test("raises a readable error for an invalid status and for an invalid plan id, writing nothing", async () => {
+    const userId = await createUser(db);
+
+    await assert.rejects(
+      () => applySubscriptionState(userId, { plan: "creator", status: "trialing", restartPeriod: true }),
+      /invalid_status/,
+      "trialing was removed by 0003 and must stay rejected",
+    );
+    await assert.rejects(
+      () => applySubscriptionState(userId, { plan: "not-a-real-plan", status: "active", restartPeriod: true }),
+      /invalid_plan/,
+    );
+
+    const { rows } = await db.query("select * from public.subscriptions where user_id = $1;", [userId]);
+    assert.equal(rows.length, 0, "a rejected call must not have created or touched a subscriptions row");
+  });
+
+  test("accepts every plan id in plans.js PLAN_ORDER and every live status", async () => {
+    const userId = await createUser(db);
+    for (const planId of PLAN_ORDER) {
+      const row = await applySubscriptionState(userId, { plan: planId, status: "active" });
+      assert.equal(row.plan, planId);
+    }
+    for (const status of ["active", "past_due", "cancelled", "expired"]) {
+      const row = await applySubscriptionState(userId, { plan: "creator", status });
+      assert.equal(row.status, status);
+    }
+  });
+
+  test("function execute grants: service_role only", async () => {
+    const userId = await createUser(db);
+    await withRole(db, "service_role", async () => {
+      await db.query(
+        "select public.apply_subscription_state($1, 'creator', 'active', 'lemonsqueezy', 'c', 's', null, true);",
+        [userId],
+      );
+    });
+
+    for (const role of ["anon", "authenticated"]) {
+      const denied = await withRole(db, role, () =>
+        isPermissionDenied(() =>
+          db.query(
+            "select public.apply_subscription_state($1, 'creator', 'active', 'lemonsqueezy', 'c', 's', null, true);",
+            [userId],
+          ),
+        ),
+      );
+      assert.ok(denied, `${role} must be denied`);
+    }
+  });
+});
+
+// --------------------------------------------------------------------------- idempotency
+
+describe("0006 idempotency", () => {
+  test("schema_migrations has exactly one row for 0006_checkout after applying it twice", async () => {
+    const { rows } = await db.query(
+      "select count(*)::int as n from public.schema_migrations where version = '0006_checkout';",
+    );
+    assert.equal(rows[0].n, 1);
   });
 });
 

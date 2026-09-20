@@ -11,9 +11,13 @@
  * Any plan can run either kind of process and buy either kind of pack.
  *
  * Prices are USD placeholders shown on the website, and are tax-exclusive: Lemon
- * Squeezy, our chosen Merchant of Record, adds VAT/sales tax at checkout. Checkout
- * itself isn't integrated yet, so the UI shows each price with a "Coming soon" button.
+ * Squeezy, our chosen Merchant of Record, adds VAT/sales tax at checkout. A plan or
+ * pack is only actually buyable once LEMONSQUEEZY_VARIANTS maps its id to a real
+ * variant (see publicPlansPayload's `purchasable`); until then the UI shows "Coming
+ * soon" for it.
  */
+import { env } from "./env.js";
+
 export const CURRENCY = "USD";
 
 export const FAMILIES = [
@@ -23,10 +27,14 @@ export const FAMILIES = [
 ];
 
 // Scale shared by every family's tier of the same name.
+// aiPerProcess is a SPEED knob, not a cost knob: every file costs the same one AI call however
+// many workers pull it, so these numbers move throughput and peak memory, never gross margin.
+// They are also clamped by env.pipeline.maxConcurrentAiJobs — advertising a number above that
+// global cap would be a promise the server can't keep, which is why Enterprise sits at 10.
 const TIERS = {
-  creator: { label: "Creator", maxProcesses: 5, aiPerProcess: 3 },
-  studio: { label: "Studio", maxProcesses: 15, aiPerProcess: 5 },
-  enterprise: { label: "Enterprise", maxProcesses: 50, aiPerProcess: 15 },
+  creator: { label: "Creator", maxProcesses: 5, aiPerProcess: 2 },
+  studio: { label: "Studio", maxProcesses: 15, aiPerProcess: 3 },
+  enterprise: { label: "Enterprise", maxProcesses: 50, aiPerProcess: 10 },
 };
 
 function plan(id, family, tier, { tagline, monthlyImages = 0, monthlyDocuments = 0, price, popular = false }) {
@@ -178,13 +186,18 @@ export const PROCESS_LIMITS = {
   templateMax: 200,
 };
 
+/** A plan or pack is purchasable once LEMONSQUEEZY_VARIANTS maps its id to a variant. */
+function isPurchasable(id) {
+  return Boolean(env.lemonSqueezy.variants[id]);
+}
+
 export function publicPlansPayload() {
   return {
     currency: CURRENCY,
     families: FAMILIES.map((family) => ({ ...family })),
-    plans: PLAN_ORDER.map((id) => ({ ...PLANS[id], price: { ...PLANS[id].price } })),
-    topupPacks: TOPUP_PACKS.map((pack) => ({ ...pack })),
-    documentPacks: DOCUMENT_PACKS.map((pack) => ({ ...pack })),
+    plans: PLAN_ORDER.map((id) => ({ ...PLANS[id], price: { ...PLANS[id].price }, purchasable: isPurchasable(id) })),
+    topupPacks: TOPUP_PACKS.map((pack) => ({ ...pack, purchasable: isPurchasable(pack.id) })),
+    documentPacks: DOCUMENT_PACKS.map((pack) => ({ ...pack, purchasable: isPurchasable(pack.id) })),
     fileLimits: { ...FILE_LIMITS },
     processLimits: { ...PROCESS_LIMITS },
     // Every price above is tax-exclusive; Lemon Squeezy, our Merchant of Record, adds the
@@ -192,5 +205,6 @@ export function publicPlansPayload() {
     // assuming either, so this stays correct if that ever changes.
     pricesIncludeTax: false,
     merchantOfRecord: "Lemon Squeezy",
+    checkoutEnabled: env.lemonSqueezy.configured,
   };
 }

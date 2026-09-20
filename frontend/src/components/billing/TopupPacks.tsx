@@ -1,8 +1,11 @@
-import { useRef } from 'react';
-import { Clock3, Package, PackageOpen, PackagePlus, type LucideIcon } from 'lucide-react';
-import type { TopupPack } from '../../lib/api';
+import { useRef, useState } from 'react';
+import { Clock3, Package, PackageOpen, PackagePlus, RefreshCw, type LucideIcon } from 'lucide-react';
+import { api, type TopupPack } from '../../lib/api';
+import { useAuth } from '../../contexts/AuthContext';
 import { gsap, useGSAP, MOTION_OK } from '../../lib/gsap';
-import { Button } from '../ui/Button';
+import { errorMessage } from '../../lib/messages';
+import { openCheckout, rememberPendingCheckout } from '../../lib/lemonSqueezy';
+import { Button, ButtonLink } from '../ui/Button';
 import { PAYMENTS_PENDING_NOTE, formatPrice, packLabel, perUnitPrice } from './planFeatures';
 
 const ACCENTS: { icon: LucideIcon; bubble: string }[] = [
@@ -15,7 +18,7 @@ interface TopupPacksProps {
   /** Document packs are mapped onto this same shape (`images` holds the document count) by the caller. */
   packs: TopupPack[];
   currency: string;
-  /** What each unit in the pack is — "image" (default) or "document". Purchase buttons always show "Coming soon": no payment provider is integrated yet. */
+  /** What each unit in the pack is — "image" (default) or "document". */
   unitLabel?: string;
   className?: string;
   /** Prices are tax-exclusive unless GET /api/plans says otherwise — drives the "Excludes VAT/sales tax" line. */
@@ -24,6 +27,25 @@ interface TopupPacksProps {
 
 export function TopupPacks({ packs, currency, unitLabel = 'image', className = '', pricesIncludeTax = false }: TopupPacksProps) {
   const ref = useRef<HTMLUListElement>(null);
+  const { user } = useAuth();
+  // Keyed by pack id: each card buys independently, so one pack's busy/error state never touches another's.
+  const [buyingId, setBuyingId] = useState<string | null>(null);
+  const [buyErrors, setBuyErrors] = useState<Record<string, string>>({});
+
+  const buy = async (pack: TopupPack) => {
+    if (buyingId) return;
+    setBuyErrors((errors) => ({ ...errors, [pack.id]: '' }));
+    setBuyingId(pack.id);
+    try {
+      const { url } = await api.createCheckout({ item: pack.id });
+      rememberPendingCheckout(pack.id);
+      await openCheckout(url);
+    } catch (err) {
+      setBuyErrors((errors) => ({ ...errors, [pack.id]: errorMessage(err, 'Couldn’t start checkout. Please try again.') }));
+    } finally {
+      setBuyingId(null);
+    }
+  };
 
   useGSAP(
     () => {
@@ -66,6 +88,9 @@ export function TopupPacks({ packs, currency, unitLabel = 'image', className = '
         const accent = ACCENTS[i % ACCENTS.length];
         const Icon = accent.icon;
         const unitPrice = perUnitPrice(pack.price, pack.images, unitLabel, currency);
+        const canBuy = pack.purchasable;
+        const buying = buyingId === pack.id;
+        const buyError = buyErrors[pack.id];
         return (
           <li
             key={pack.id}
@@ -79,7 +104,28 @@ export function TopupPacks({ packs, currency, unitLabel = 'image', className = '
             {unitPrice && <p className="mt-0.5 text-xs font-bold text-ink-soft">{unitPrice}</p>}
             {!pricesIncludeTax && <p className="mt-0.5 text-[11px] font-bold text-ink-soft">Excludes VAT/sales tax</p>}
             <p className="mb-6 mt-3 text-sm leading-relaxed text-ink-soft">Never expire · used after your plan’s allowance</p>
-            <span className="mt-auto block" title={PAYMENTS_PENDING_NOTE}>
+            {canBuy && !user ? (
+              // The server can't attribute a purchase without a user id, so a signed-out visitor signs in first.
+              <ButtonLink to="/login" variant="secondary" className="mt-auto w-full">
+                Sign in to buy
+              </ButtonLink>
+            ) : canBuy ? (
+              <Button
+                variant="secondary"
+                className="mt-auto w-full"
+                onClick={() => buy(pack)}
+                disabled={buyingId !== null}
+                aria-label={`Buy ${packLabel(pack.images, unitLabel)}`}
+              >
+                {buying ? (
+                  <RefreshCw className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />
+                ) : (
+                  <Package className="h-4 w-4" aria-hidden />
+                )}
+                {buying ? 'Starting checkout…' : 'Buy pack'}
+              </Button>
+            ) : (
+              <span className="mt-auto block" title={PAYMENTS_PENDING_NOTE}>
                 <Button
                   disabled
                   variant="secondary"
@@ -91,6 +137,11 @@ export function TopupPacks({ packs, currency, unitLabel = 'image', className = '
                   Coming soon
                 </Button>
               </span>
+            )}
+            {/* Mounted before any error exists, so a screen reader reliably announces the change. */}
+            <p aria-live="polite" className={buyError ? 'mt-2 text-xs font-semibold text-rose-ink' : 'sr-only'}>
+              {buyError}
+            </p>
           </li>
         );
       })}

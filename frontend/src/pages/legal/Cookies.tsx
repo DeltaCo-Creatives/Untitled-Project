@@ -34,6 +34,12 @@ const STORAGE_ITEMS = [
     duration: 'Until you clear browser storage',
   },
   {
+    name: 'drivetag-pending-checkout',
+    purpose: 'Remembers which plan or pack you were buying, so we can show your receipt when you come back from payment',
+    type: 'Strictly necessary',
+    duration: 'Until the purchase is confirmed, or you close the tab',
+  },
+  {
     name: 'Vercel Web Analytics',
     purpose: 'Counts page views using a hash of the request, cookieless',
     type: 'Optional — analytics (only with consent)',
@@ -77,7 +83,8 @@ export default function Cookies() {
         </div>
         <p>
           The Supabase items live in your browser's local storage, not as HTTP cookies, but we list them here for
-          completeness since they serve the same purpose. Vercel Web Analytics, when you allow it, strips every URL
+          completeness since they serve the same purpose. <span className="font-mono text-xs">drivetag-pending-checkout</span>{' '}
+          uses session storage, so it disappears when you close the tab. Vercel Web Analytics, when you allow it, strips every URL
           query parameter except <span className="font-mono text-xs">utm_*</span> and the URL fragment before
           sending anything, because sign-in redirects can carry sensitive values in the URL.
         </p>

@@ -16,6 +16,7 @@ const MIGRATION_FILES = [
   "0003_cleanup.sql",
   "0004_documents.sql",
   "0005_beta.sql",
+  "0006_checkout.sql",
 ];
 
 // Mirrors Supabase's own project setup, not anything our migrations create:
@@ -50,9 +51,9 @@ function readMigration(file) {
 }
 
 /**
- * A fresh in-memory Postgres with 0001 -> 0002 -> 0003 -> 0004 -> 0005 -> 0004 -> 0005
- * applied (the repeated 0004/0005 runs are the idempotency check: they must not error
- * or change behaviour).
+ * A fresh in-memory Postgres with 0001 -> 0002 -> 0003 -> 0004 -> 0005 -> 0006 ->
+ * 0004 -> 0005 -> 0006 applied (the repeated 0004/0005/0006 runs are the idempotency
+ * check: they must not error or change behaviour).
  */
 export async function createTestDb() {
   const db = new PGlite();
@@ -60,9 +61,10 @@ export async function createTestDb() {
   for (const file of MIGRATION_FILES) {
     await db.exec(readMigration(file));
   }
-  // Re-run the last two once more: must be a no-op, not an error.
+  // Re-run the last three once more: must be a no-op, not an error.
   await db.exec(readMigration("0004_documents.sql"));
   await db.exec(readMigration("0005_beta.sql"));
+  await db.exec(readMigration("0006_checkout.sql"));
   return db;
 }
 
