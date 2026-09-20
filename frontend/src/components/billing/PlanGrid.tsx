@@ -4,6 +4,12 @@ import { gsap, useGSAP, MOTION_OK } from '../../lib/gsap';
 import { PlanCard } from './PlanCard';
 import { bundleSavings, plansForFamily, type FamilyChoice } from './planFeatures';
 
+/** A beta tester's discount, resolved from `me.beta` by the caller. Null renders every card at its regular price. */
+export interface BetaPricing {
+  percent: number;
+  code: string;
+}
+
 interface PlanGridProps {
   /** The full plan list from GET /api/plans — filtered here to Free plus the selected family's tiers. */
   plans: PlanInfo[];
@@ -14,9 +20,22 @@ interface PlanGridProps {
   signedIn?: boolean;
   /** Tighter cards, for the landing page. */
   compact?: boolean;
+  /** Prices are tax-exclusive unless GET /api/plans says otherwise — drives the "Excludes VAT/sales tax" line. */
+  pricesIncludeTax?: boolean;
+  /** A signed-in beta tester's discount, or null/undefined for everyone else. */
+  beta?: BetaPricing | null;
 }
 
-export function PlanGrid({ plans, family, currency, currentPlanId = null, signedIn = false, compact = false }: PlanGridProps) {
+export function PlanGrid({
+  plans,
+  family,
+  currency,
+  currentPlanId = null,
+  signedIn = false,
+  compact = false,
+  pricesIncludeTax = false,
+  beta = null,
+}: PlanGridProps) {
   const ref = useRef<HTMLDivElement>(null);
   const visiblePlans = plansForFamily(plans, family);
 
@@ -71,6 +90,8 @@ export function PlanGrid({ plans, family, currency, currentPlanId = null, signed
               signedIn={signedIn}
               compact={compact}
               savingsNote={bundleSavings(plans, plan, currency)}
+              pricesIncludeTax={pricesIncludeTax}
+              beta={beta}
             />
           </div>
         ))}

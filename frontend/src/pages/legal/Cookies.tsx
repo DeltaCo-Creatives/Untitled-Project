@@ -28,6 +28,12 @@ const STORAGE_ITEMS = [
     duration: 'Until you change your choice or clear browser storage',
   },
   {
+    name: 'drivetag-beta-banner-v1',
+    purpose: 'Remembers that you dismissed the closed-beta banner',
+    type: 'Strictly necessary',
+    duration: 'Until you clear browser storage',
+  },
+  {
     name: 'Vercel Web Analytics',
     purpose: 'Counts page views using a hash of the request, cookieless',
     type: 'Optional — analytics (only with consent)',
@@ -76,6 +82,10 @@ export default function Cookies() {
           sending anything, because sign-in redirects can carry sensitive values in the URL.
         </p>
         <p>We self-host our fonts, so no font requests are sent to Google or any other third party.</p>
+        <p>
+          Checkout happens on Lemon Squeezy's own pages, which set their own cookies under their domain and are
+          covered by <a className="text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60" href="https://www.lemonsqueezy.com/privacy" target="_blank" rel="noreferrer">Lemon Squeezy's own policy</a>, not this one. DriveTag itself sets no cookies for payments.
+        </p>
       </LegalSection>
 
       <LegalSection id="what-we-dont-collect" heading="What we don't collect">

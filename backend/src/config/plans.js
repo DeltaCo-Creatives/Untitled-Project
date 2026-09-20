@@ -10,8 +10,9 @@
  * AI workers per process); the family fixes which monthly allowances you get.
  * Any plan can run either kind of process and buy either kind of pack.
  *
- * Prices are USD placeholders shown on the website. No payment provider is
- * integrated yet, so the UI shows each price with a "Coming soon" button.
+ * Prices are USD placeholders shown on the website, and are tax-exclusive: Lemon
+ * Squeezy, our chosen Merchant of Record, adds VAT/sales tax at checkout. Checkout
+ * itself isn't integrated yet, so the UI shows each price with a "Coming soon" button.
  */
 export const CURRENCY = "USD";
 
@@ -186,5 +187,10 @@ export function publicPlansPayload() {
     documentPacks: DOCUMENT_PACKS.map((pack) => ({ ...pack })),
     fileLimits: { ...FILE_LIMITS },
     processLimits: { ...PROCESS_LIMITS },
+    // Every price above is tax-exclusive; Lemon Squeezy, our Merchant of Record, adds the
+    // buyer's local VAT/sales tax at checkout. The frontend renders both fields rather than
+    // assuming either, so this stays correct if that ever changes.
+    pricesIncludeTax: false,
+    merchantOfRecord: "Lemon Squeezy",
   };
 }

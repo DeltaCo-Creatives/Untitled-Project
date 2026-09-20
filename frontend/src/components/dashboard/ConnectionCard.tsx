@@ -4,17 +4,24 @@ import { Check, CircleAlert, HardDrive, Unplug } from 'lucide-react';
 import { api } from '../../lib/api';
 import { gsap, useGSAP, MOTION_OK } from '../../lib/gsap';
 import { errorMessage } from '../../lib/messages';
+import { plural } from '../../lib/format';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 
 interface ConnectionCardProps {
   /** Re-fetch the dashboard once Drive is disconnected. */
   onDisconnected: () => Promise<void>;
+  /**
+   * Days since Drive was connected, set only while DriveTag's Google OAuth app is in Testing status and that
+   * count is still under the dashboard's own reconnect-warning threshold — once it crosses it, the dashboard
+   * shows a dedicated warning card instead, so this stays null then ("show the same fact once, quietly").
+   */
+  daysSinceDriveConnect?: number | null;
   className?: string;
 }
 
 /** Google Drive connection status and the Disconnect flow. */
-export function ConnectionCard({ onDisconnected, className = '' }: ConnectionCardProps) {
+export function ConnectionCard({ onDisconnected, daysSinceDriveConnect = null, className = '' }: ConnectionCardProps) {
   const ref = useRef<HTMLElement>(null);
   const [confirming, setConfirming] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -72,6 +79,13 @@ export function ConnectionCard({ onDisconnected, className = '' }: ConnectionCar
         Disconnecting stops sorting, revokes DriveTag’s access at Google, and deletes the stored token. Your files and work
         processes stay exactly where they are.
       </p>
+
+      {typeof daysSinceDriveConnect === 'number' && (
+        <p className="mb-5 text-xs leading-relaxed text-ink-soft">
+          Google re-verifies Drive access every 7 days while DriveTag is in review — you connected{' '}
+          {daysSinceDriveConnect === 0 ? 'today' : `${plural(daysSinceDriveConnect, 'day', 'days')} ago`}.
+        </p>
+      )}
 
       {error && (
         <p

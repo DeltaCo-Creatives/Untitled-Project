@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { CircleAlert, Info, LogOut, PlugZap, RefreshCw, X } from 'lucide-react';
+import { CircleAlert, Info, LogOut, PlugZap, RefreshCw, TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { gsap, useGSAP, SplitText, MOTION_OK } from '../lib/gsap';
 import { plural } from '../lib/format';
@@ -16,6 +16,14 @@ import { StatsCard } from '../components/dashboard/StatsCard';
 import { ConnectionCard } from '../components/dashboard/ConnectionCard';
 import { AccountCard } from '../components/dashboard/AccountCard';
 import { ActivityList } from '../components/dashboard/ActivityList';
+import { BetaSignupsCard } from '../components/dashboard/BetaSignupsCard';
+
+/** Google expires a Drive refresh token 7 days after issue while the OAuth app is in Testing status. */
+const DRIVE_REVERIFY_WARNING_DAYS = 5;
+
+function daysSince(iso: string) {
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
+}
 
 export default function Dashboard() {
   useDocumentTitle('Dashboard');
@@ -65,6 +73,12 @@ export default function Dashboard() {
     syncing && status?.kind === 'organize' ? processes.find((process) => process.id === status.activeProcessId) : undefined;
   const live = syncing || Object.keys(runs).length > 0 || activity.some((entry) => entry.status === 'processing');
   const latest = activity.find((entry) => entry.status === 'completed' && entry.new_name);
+
+  // While Google's OAuth app is in Testing status, a Drive refresh token expires after 7 days. Only meaningful
+  // once Drive is actually connected and we know when — an older backend omits driveConnectedAt (normalized to null).
+  const daysSinceDriveConnect =
+    me?.googleAppTesting && me.driveConnected && me.driveConnectedAt ? daysSince(me.driveConnectedAt) : null;
+  const driveReverifySoon = daysSinceDriveConnect !== null && daysSinceDriveConnect >= DRIVE_REVERIFY_WARNING_DAYS;
 
   const fullName = user?.user_metadata?.full_name as string | undefined;
   const firstName = fullName?.trim().split(/\s+/)[0];
@@ -282,6 +296,18 @@ export default function Dashboard() {
               </div>
             )}
 
+            {view === 'ready' && driveReverifySoon && (
+              <div className="dash-item mb-6 flex flex-col gap-3 rounded-[2rem] border border-butter bg-butter-soft px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="flex items-start gap-2 text-sm font-semibold leading-relaxed text-ink">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                  Google expires Drive access every 7 days while DriveTag is in review. Reconnect to keep sorting.
+                </p>
+                <ButtonLink to="/connect" variant="secondary" size="sm" className="shrink-0">
+                  Reconnect Drive
+                </ButtonLink>
+              </div>
+            )}
+
             {view === 'setup' ? (
               <div className="dash-item mx-auto max-w-xl rounded-[2rem] border border-line bg-white p-8 text-center shadow-lift sm:p-10">
                 <div
@@ -327,10 +353,17 @@ export default function Dashboard() {
                   <div className="grid gap-6 lg:grid-cols-3">
                     <StatsCard activity={activity} className="dash-item lg:col-span-2" />
                     <div className="flex flex-col gap-6">
-                      <ConnectionCard onDisconnected={reload} className="dash-item" />
+                      <ConnectionCard
+                        onDisconnected={reload}
+                        // Only passed when the warning card above isn't already showing the same fact.
+                        daysSinceDriveConnect={!driveReverifySoon ? daysSinceDriveConnect : null}
+                        className="dash-item"
+                      />
                       <AccountCard className="dash-item" />
                     </div>
                   </div>
+
+                  {me.admin && <BetaSignupsCard className="dash-item" />}
 
                   <ActivityList activity={activity} processes={processes} live={live} className="dash-item" />
                 </div>

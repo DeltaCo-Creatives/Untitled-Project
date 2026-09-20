@@ -2,7 +2,7 @@ import { PLANS } from "../config/plans.js";
 import { getUsage } from "../repositories/usage.repo.js";
 
 // A paid plan only counts while it's paid for. past_due is a grace period until
-// a payment provider exists to resolve it.
+// checkout through Lemon Squeezy, our Merchant of Record, exists to resolve it.
 const PAID_STATUSES = new Set(["active", "past_due"]);
 
 /** The plan whose limits apply right now; lapsed paid plans fall back to Free. */

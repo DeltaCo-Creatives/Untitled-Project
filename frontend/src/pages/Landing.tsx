@@ -23,6 +23,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { Logo } from '../components/ui/Logo';
 import { ButtonLink } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { BetaBanner } from '../components/BetaBanner';
 import { TagFlowIllustration } from '../components/TagFlowIllustration';
 import { MemoryDemo } from '../components/MemoryDemo';
 import { DocumentFlowIllustration } from '../components/DocumentFlowIllustration';
@@ -221,6 +222,7 @@ export default function Landing() {
 
   return (
     <div ref={pageRef} className="min-h-screen overflow-x-clip">
+      <BetaBanner />
       <header
         className="site-nav sticky top-0 z-40 border-b border-transparent transition-[background-color,box-shadow,border-color] duration-300 data-[scrolled=true]:border-line data-[scrolled=true]:bg-white/75 data-[scrolled=true]:shadow-soft data-[scrolled=true]:backdrop-blur-md"
         data-scrolled="false"

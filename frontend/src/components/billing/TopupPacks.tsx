@@ -18,9 +18,11 @@ interface TopupPacksProps {
   /** What each unit in the pack is — "image" (default) or "document". Purchase buttons always show "Coming soon": no payment provider is integrated yet. */
   unitLabel?: string;
   className?: string;
+  /** Prices are tax-exclusive unless GET /api/plans says otherwise — drives the "Excludes VAT/sales tax" line. */
+  pricesIncludeTax?: boolean;
 }
 
-export function TopupPacks({ packs, currency, unitLabel = 'image', className = '' }: TopupPacksProps) {
+export function TopupPacks({ packs, currency, unitLabel = 'image', className = '', pricesIncludeTax = false }: TopupPacksProps) {
   const ref = useRef<HTMLUListElement>(null);
 
   useGSAP(
@@ -75,6 +77,7 @@ export function TopupPacks({ packs, currency, unitLabel = 'image', className = '
             <h3 className="text-2xl font-semibold tracking-tight">{packLabel(pack.images, unitLabel)}</h3>
             <p className="mt-1 font-display text-xl font-bold text-ink">{formatPrice(pack.price, currency)}</p>
             {unitPrice && <p className="mt-0.5 text-xs font-bold text-ink-soft">{unitPrice}</p>}
+            {!pricesIncludeTax && <p className="mt-0.5 text-[11px] font-bold text-ink-soft">Excludes VAT/sales tax</p>}
             <p className="mb-6 mt-3 text-sm leading-relaxed text-ink-soft">Never expire · used after your plan’s allowance</p>
             <span className="mt-auto block" title={PAYMENTS_PENDING_NOTE}>
                 <Button
