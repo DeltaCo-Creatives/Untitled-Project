@@ -8,6 +8,14 @@ DriveTag sorts two **kinds** of work process, chosen when a process is created a
 - **[../CLAUDE.md](../CLAUDE.md)** — architecture and the non-obvious design decisions for the whole repo; this doc doesn't repeat that reasoning.
 - **[../backend/README.md](../backend/README.md)** — API setup, env vars, database, deployment, operations.
 
+### Where this code actually is (2026-09-20)
+
+**Everything described below is committed on `staging` and is not yet deployed.** Vercel builds `drivetag-ai.com` from `production`, and `production` is still the older release, so the live site right now has **no `/beta` page**, no "Excludes VAT/sales tax" line and no beta pricing — verified: the live bundle contains zero occurrences of "Request beta access". The live backend `api.drivetag-ai.com` is the matching older build (`GET /api/plans` returns no `pricesIncludeTax`).
+
+`production` also carries five accidental debug files that should be deleted rather than kept: `backend/h.json`, `backend/m.json`, `backend/p.json`, `frontend/r2.json`, `frontend/r3.json`. They are saved curl outputs, not fixtures, and nothing in `src` reads them.
+
+Merging `staging` into `production` is what makes this document describe the live site. See [State & next steps](#state--next-steps) for the ordered list.
+
 ---
 
 ## Quickstart & environment
@@ -24,15 +32,15 @@ VITE_SUPABASE_ANON_KEY=<anon key>
 VITE_API_URL=http://localhost:3001
 ```
 
-| Variable | Purpose |
-|---|---|
-| `VITE_SUPABASE_URL` | Supabase project URL, used by `src/lib/supabase.ts` |
-| `VITE_SUPABASE_ANON_KEY` | Supabase anon (public) key |
-| `VITE_API_URL` | Backend base URL, no trailing slash — `src/lib/api.ts` sends every request here |
+| Variable | Required at build? | Purpose |
+|---|---|---|
+| `VITE_SUPABASE_URL` | yes | Supabase project URL, used by `src/lib/supabase.ts` |
+| `VITE_SUPABASE_ANON_KEY` | yes | Supabase publishable (public) key. **This is now an `sb_publishable_…` key, not a legacy `eyJ…` JWT** — the project has migrated to Supabase's new API keys. Judge it by prefix, never by length |
+| `VITE_API_URL` | yes | Backend base URL, no trailing slash — `src/lib/api.ts` sends every request here |
 
-**Public by design.** Every `VITE_*` value is compiled into the browser bundle. Never put the Supabase `service_role` key or the Google client secret in this file. `VITE_GOOGLE_CLIENT_ID` is not read anywhere in the app — Google sign-in goes through Supabase's provider config, so an old `.env` can drop it without effect.
+**All three are required at build time, and an empty value fails exactly like a missing one.** `vite.config.ts` filters `REQUIRED_AT_BUILD` with `!env[name]`, so `VITE_API_URL=` is as fatal as leaving the line out, and throws `Missing VITE_… for this build`. Deliberate: a deploy must never silently ship the wrong API address. `npm run dev` is the exception — it falls back to `VITE_API_URL=http://localhost:3001` when unset, so local dev works with only the two Supabase vars.
 
-**Build guards.** `vite.config.ts` throws `Missing VITE_… for this build` if any of the three is unset — deliberate, so a deploy can never silently ship the wrong API address. `npm run dev` still falls back to `VITE_API_URL=http://localhost:3001` when it's unset, so local dev works with only the two Supabase vars.
+**Public by design.** Every `VITE_*` value is compiled into the browser bundle. Never put the Supabase `service_role`/`sb_secret_` key or the Google client secret in this file. `VITE_GOOGLE_CLIENT_ID` still appears in some local `.env` files but **nothing in `src` reads it** (verified 2026-09-20: the only hit in the whole frontend outside `.env` is this README). Google sign-in goes through Supabase's provider config, so it is stale and can be deleted.
 
 Where each value comes from: Supabase dashboard → Project Settings → API (URL and anon key); `VITE_API_URL` is the backend address (local `http://localhost:3001`, production `https://api.drivetag-ai.com`). Backend credentials are covered in [../backend/README.md](../backend/README.md#getting-each-credential).
 
@@ -65,17 +73,17 @@ Serves the production build on `http://localhost:4173` (`strictPort`).
 ## Deploying to Vercel
 
 - **Root Directory:** `frontend`.
-- **Environment Variables** (Settings → Environment Variables, for **Production**): the same three `VITE_*` vars as local dev, with `VITE_API_URL=https://api.drivetag-ai.com`.
+- **Environment Variables** (Settings → Environment Variables): the same three `VITE_*` vars as local dev, with `VITE_API_URL=https://api.drivetag-ai.com`. **Tick both the Production *and* Preview environments for all three.** A variable scoped to Production only builds the production domain fine and then fails every branch/PR preview build with `Missing VITE_API_URL for this build` — exactly what happened on 2026-09-20, since fixed. Preview builds are how a `staging` branch gets checked before it's merged, so they need the vars too.
 - **Build guard:** on Vercel (`VERCEL=1`), `vite.config.ts` additionally refuses to build if `VITE_API_URL` points at `localhost`/`127.0.0.1` — a mistake that once shipped to production.
 - **`vercel.json`** rewrites every path to `/index.html`. Without it, every client route (`/login`, `/dashboard`, `/connect`, …) 404s on Vercel — this is exactly what broke production login on 2026-09-17, since fixed.
 - **Values are baked in at build time.** Changing a variable in the Vercel dashboard does nothing until you redeploy with **"Use existing build cache" turned off**.
-- **Vercel Analytics** must be turned on in the Vercel project dashboard separately — the code (`@vercel/analytics`) is already wired in (see [Pricing UI, cookie consent & analytics, legal pages](#pricing-ui-cookie-consent--analytics-legal-pages)), but no data appears until the dashboard toggle is on.
+- **Vercel Analytics is enabled** in the Vercel project dashboard — the code (`@vercel/analytics`) is wired in and consent-gated (see [Pricing UI, cookie consent & analytics, legal pages](#pricing-ui-cookie-consent--analytics-legal-pages)).
 
 ---
 
 ## DNS (Namecheap → Vercel)
 
-Vercel shows **"Invalid Configuration"** for `drivetag-ai.com`. Root cause, diagnosed 2026-09-19: Namecheap's **HTTPS toggle** on the `@` A record is **ON**. That routes public traffic through Namecheap's own SSL proxy, so DNS answers `159.198.67.67` (a Namecheap IP) instead of the `216.198.79.1` the record itself says — Vercel's domain check never sees its own IP and can't issue a certificate. Verified the same day: Namecheap's authoritative nameservers return `159.198.67.67` for both `@` and `www`.
+**Settled as of 2026-09-20** — `drivetag-ai.com` resolves and serves, and DeveloperToDo.md §7 lists the Namecheap records as done. Kept as a record of what was wrong, because it is easy to re-break: until 2026-09-19 Vercel showed **"Invalid Configuration"** because Namecheap's **HTTPS toggle** on the `@` A record was **ON**, which routed traffic through Namecheap's SSL proxy so DNS answered `159.198.67.67` instead of the `216.198.79.1` the record said, and Vercel's domain check never saw its own IP. The steps below are the configuration to keep, not a fix still to apply.
 
 Fix in Namecheap → **Domain List → drivetag-ai.com → Advanced DNS**:
 
@@ -210,6 +218,12 @@ Vercel and this backend deploy from the same push but as two separate services, 
 - The same rule covers this release's `/api/me` additions: `admin` → `false`, `beta` → `{tester: false, discountPercent: 0, discountCode: null}`, `googleAppTesting` → `false`, `driveConnectedAt` → `null`. Against the *current* production backend, which has none of them, that means no admin card, no beta pricing and no reconnect warning — never a crash.
 - `lib/messages.ts`'s `errorMessage()` catches the sharper failure mode too — a route that doesn't exist at all yet (a 404 whose message starts with `"No route for"`) — and shows "DriveTag is updating. Refresh in a minute." instead of a raw error.
 
+**The public beta sign-up is a special case, because on an older backend it doesn't 404.** `POST /api/beta/signups` is a *public* route mounted before `accountRouter`; a backend that predates it has nothing there, so the request falls through to `accountRouter`'s `router.use(requireAuth)` and comes back **401 `Missing bearer token`** — an auth error for a form that was never meant to need auth. Verified against the deployed backend on 2026-09-20. So `pages/Beta.tsx` keeps `const AUTH_SHAPED = new Set([401, 403, 404, 405])` and treats any of those statuses from that endpoint as "this server predates the route", showing:
+
+> Beta sign-up isn't live on this server yet. Try again in a few minutes, or email support@drivetag-ai.com and we'll add you by hand.
+
+Never let the raw "Missing bearer token" reach a signed-out visitor on a public form — it reads as "you're logged out", which is wrong and unactionable. Keep the fallback naming a human address, so a tester who hits the gap is still reachable. This stops mattering once `production` carries the route, but the handling stays: the same gap reopens on every future deploy of a new public endpoint.
+
 Every normalizer's fallback is the literal shape the previous release's API actually served, not a guess — keep these when adding the next new field for the same reason.
 
 ---
@@ -274,6 +288,7 @@ GSAP guidance for Claude Code lives in `../.claude/skills/gsap-*` — third-part
 - **Form field borders** use `border-ink-soft/80` — the `border-line` token is too faint for an input boundary.
 - **Icon-only buttons** need an `aria-label` and a target of at least 24px (e.g. Modal's close button).
 - **Onboarding's Connect-Drive step** explains what Drive access is used for and links `/privacy#google-user-data`.
+- **A consent link must not cost you the form.** The Privacy Policy link inside `/beta`'s consent checkbox label opens in a new tab (`target="_blank" rel="noreferrer"`) with a visually-hidden `(opens in a new tab)` after the link text. Same-tab navigation would discard a half-completed sign-up — asking someone to consent and then destroying their work when they go read what they're consenting to. New-tab is the exception here, not the house style: announce it whenever you use it, and only for "read this before you agree" links.
 - **Vendor-neutral copy.** The UI never names the AI vendor or model — "advanced AI" only.
 
 ---
@@ -335,9 +350,29 @@ Every price, limit and feature line on `/plans` and the Landing page is driven b
 
 ## State & next steps
 
-- **Checkout UI** — Lemon Squeezy is chosen; the buttons still say "Coming soon". Plan and pack buttons already render real, tax-exclusive prices from `/api/plans`; only the purchase action is missing.
-- **Google Drive Picker widget** — optional upgrade over the current searchable folder list (`components/drive/FolderBrowser.tsx`).
-- **Unsaved-changes guard on browser Back** in the process editor. `ProcessEditor.tsx` guards a page unload (`beforeunload`) and in-app router links (`guardLinks`), but `BrowserRouter` has no `useBlocker`, so the browser's own Back/Forward buttons aren't covered yet.
-- **Dashboard "At a glance" counts** cover the latest 50 activity rows (`ACTIVITY_LIMIT`), not all-time totals — the card says so; real totals need a count endpoint.
-- ~~Rename the package~~ — done; `frontend/package.json` is now `drivetag-frontend`.
-- **Code-split the bundle.** The production build emits a single ~981 KB JS chunk (`dist/assets/index-*.js`), over Vite's 500 KB warning threshold and grown from ~925 KB with this release's new components. Route-level `React.lazy` is the natural first cut.
+### Done (committed on `staging`, not yet live)
+
+- Closed-beta programme: the public `/beta` page, a dismissible landing banner, footer and login links, the admin-only `BetaSignupsCard`, and the day-5 Drive-reconnect warning driven by `me.googleAppTesting`.
+- Beta pricing on `/plans` — struck-through regular price, screen-reader reading order, signed-in testers only.
+- Tax-exclusive prices everywhere, driven by `pricesIncludeTax: false` from `GET /api/plans`; Lemon Squeezy named as Merchant of Record in `TransparencyNote` and across the legal pages.
+- The beta sign-up form survives an older backend (401 handling, above) and survives reading the Privacy Policy (new-tab consent link, above).
+- `npx tsc -b` is clean. `npm run lint` reports only the pre-existing `AuthContext` fast-refresh warning.
+- ~~Rename the package~~ — `frontend/package.json` is `drivetag-frontend`.
+
+### Claude's next tasks (code — ask for these)
+
+1. **Lemon Squeezy checkout UI.** Replace the disabled "Coming soon" buttons on `PlanCard` and `TopupPacks` with real hosted-checkout links. Blocked on the owner supplying the store and variant IDs below — plan cards already render live prices, so this is purely wiring a URL per plan id and per pack, plus a return path back into the app. Nothing here is guessable: a variant id typed from memory silently sells the wrong thing.
+2. **Delete the legacy endpoint shims' frontend side** once the backend drops `/api/drive/config`, `/raw-status` and `/organize`. Nothing in `src` should be left calling them.
+3. **Code-split the bundle.** The production build emits a single ~981 KB JS chunk (`dist/assets/index-*.js`), over Vite's 500 KB warning threshold and grown from ~925 KB with this release. Route-level `React.lazy` is the natural first cut.
+4. **Unsaved-changes guard on browser Back** in the process editor. `ProcessEditor.tsx` already guards page unload (`beforeunload`) and in-app links (`guardLinks`), but `BrowserRouter` has no `useBlocker`, so Back/Forward aren't covered.
+5. **Dashboard "At a glance" real totals.** The counts cover the latest 50 activity rows (`ACTIVITY_LIMIT`) and the card says so; all-time totals need a backend count endpoint first.
+6. **Google Drive Picker widget** — optional upgrade over the current searchable folder list (`components/drive/FolderBrowser.tsx`). Lowest priority; the current browser works.
+
+### Owner's next tasks (only you can do these)
+
+1. **Merge `staging` into `production`.** Until then none of the Done list is live and `/beta` 404s for every tester you invite. Run migration `0005_beta.sql` in the Supabase SQL editor **before** the merge — nothing applies migrations automatically. Delete the five stray `*.json` debug files on `production` in the same pass.
+2. **Set the three `VITE_*` vars for the Preview environment too**, not just Production (see [Deploying to Vercel](#deploying-to-vercel)), so branch previews build.
+3. **Check `SUPABASE_SERVICE_ROLE_KEY` on DigitalOcean before disabling legacy keys in Supabase.** The frontend is confirmed migrated — the live bundle uses the `sb_publishable_` key and contains zero legacy JWTs. The backend's key has *not* been confirmed. If it's still an `eyJ…` JWT when you turn legacy keys off, every `/api/*` call fails and `/health` stays green, so nothing alerts you. Judge the value by its `sb_secret_` prefix, never by length. Details in [../backend/README.md](../backend/README.md).
+4. **Lemon Squeezy setup**, then hand Claude: the **Store ID** (Settings → General), one **Variant ID** per purchasable thing (9 paid plans, doubled wherever a yearly price exists, plus the 6 top-up packs), an **API key** (Settings → API) and a **webhook signing secret** (Settings → Webhooks). Name each Lemon Squeezy variant after its plan id from `backend/src/config/plans.js` — that's what makes the webhook mapping unambiguous. **Do not point the apex domain at Lemon Squeezy:** `drivetag-ai.com`'s `A` record must stay on Vercel or the site goes down. Use a checkout subdomain with a CNAME instead.
+5. **Confirm Drive watches now register.** DNS is settled and Google domain verification (Search Console + Cloud) is recorded done — see [DNS (Namecheap → Vercel)](#dns-namecheap--vercel) and DeveloperToDo.md §4/§7. Check whether `POST /api/drive/watch` now succeeds, and if so move `AUTO_SYNC_INTERVAL_SECONDS` to `0`; until confirmed, sorting stays on the polling fallback. Brand verification, restricted-scope verification and CASA are still open — see [Google OAuth branding & verification](#google-oauth-branding--verification).
+6. **Set `GOOGLE_APP_TESTING=false`** on the backend once Google grants verification, or every user keeps seeing a 7-day reconnect warning for an expiry that no longer applies.

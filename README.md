@@ -14,18 +14,30 @@ Automatic sorting for the **images and documents** creative agencies and freelan
 
 | Area | State |
 |---|---|
-| Website | ✅ Live at https://drivetag-ai.com (Vercel). Landing, pricing, Google login, onboarding, dashboard, process editor, legal pages |
-| API | ✅ Live at https://api.drivetag-ai.com (DigitalOcean) |
+| Website | ✅ Live at https://drivetag-ai.com (Vercel). Landing, pricing, Google login, onboarding, dashboard, process editor, legal pages. Serving the pre-beta build — see Deployment |
+| API | ✅ Live at https://api.drivetag-ai.com (DigitalOcean). Also the pre-beta build — see Deployment |
 | Image sorting | ✅ Working end to end in production |
-| Document sorting | 🟡 Built and tested in this working tree. Goes live once migration `0004` is run and the release is pushed ([DeveloperToDo.md §1](DeveloperToDo.md)) |
-| Plan families | 🟡 Same release: Images, Documents, and Images + Documents plans, plus image and document packs |
-| Database | ✅ `0001`–`0004` applied · ⏳ `0005_beta.sql` waiting to be run |
+| Document sorting | ✅ Live. `0004` is applied and the live `GET /api/plans` serves the Images, Documents and Images + Documents families |
+| Plan families | ✅ Live: three families × three tiers, plus image and document packs |
+| Closed beta | 🟡 Built and committed on `staging`: the `/beta` sign-up page, landing banner, admin sign-ups card and beta pricing. Not live yet — see Deployment |
+| **Deployment** | ⚠️ **Built ≠ deployed.** `staging` (`c3d6635`) holds the closed-beta + Lemon Squeezy + VAT release. The live site and the live API are both built from `production` (`76eb2a6`) and don't have it: no `/beta` page in the site bundle, no `/api/beta` on the API, and no `pricesIncludeTax` in `GET /api/plans`. Merging `staging` into `production` is what ships it — after `0005` runs ([DeveloperToDo.md §1](DeveloperToDo.md)) |
+| Database | ✅ `0001`–`0004` applied · ⏳ `0005_beta.sql` is written and tested but **has not been run** in Supabase. It must run before the release is pushed ([DeveloperToDo.md §1.2](DeveloperToDo.md)) |
 | Legal and compliance | ✅ Privacy, Terms, Refunds, Cookies and Data-deletion pages, all updated for documents. Also a consent-gated cookieless analytics banner, self-hosted fonts and self-service account deletion |
-| Domain | ⚠️ Vercel shows "Invalid Configuration" until the Namecheap records are fixed ([DeveloperToDo.md §2](DeveloperToDo.md)) |
-| Google verification | ⚠️ Search Console domain verification and OAuth branding pending ([DeveloperToDo.md §4](DeveloperToDo.md)) |
-| Payments | ⏳ Lemon Squeezy chosen and named in the legal pages as Merchant of Record; checkout isn't built. Prices exclude VAT/sales tax, which Lemon Squeezy adds at checkout. Plans and credits are set by hand ([DeveloperToDo.md §5](DeveloperToDo.md)) |
+| Domain | ✅ `drivetag-ai.com` and `api.drivetag-ai.com` both resolve and serve. The Namecheap records are settled ([DeveloperToDo.md §7](DeveloperToDo.md)) — and the apex `A` record must stay on Vercel, never point at Lemon Squeezy ([§2.1](DeveloperToDo.md)) |
+| Google verification | ✅ Search Console + Cloud domain verification recorded done · ⚠️ brand verification, restricted-scope verification and CASA still pending ([DeveloperToDo.md §4](DeveloperToDo.md)) |
+| Payments | ⏳ Lemon Squeezy chosen and named as Merchant of Record in Terms, Privacy, Refunds and Cookies (legal entity: **Sold through Link, LLC**). **Checkout is not built** — the plan buttons say "Coming soon", and plans and credits are set by hand ([DeveloperToDo.md §5](DeveloperToDo.md)). Prices exclude VAT/sales tax, which Lemon Squeezy adds at checkout |
 
 **Your to-do list** (DNS, database migration, Google, hosting settings, security, decisions) is in **[DeveloperToDo.md](DeveloperToDo.md)**.
+
+### Where the code lives right now
+
+Three places, and they disagree. This is worth knowing before reading anything below as "done":
+
+- **`staging` — `c3d6635`.** The full closed-beta release: `/beta` sign-ups, the admin card, the Drive-reconnect warning, beta pricing, Lemon Squeezy named in the legal pages, VAT wording, migration `0005_beta.sql`, and the backend test suite at 152 passing tests.
+- **`production` — `76eb2a6`.** Everything up to and including document sorting, plus five accidental debug JSON files (`backend/h.json`, `backend/m.json`, `backend/p.json`, `frontend/r2.json`, `frontend/r3.json`). They're saved `curl` outputs, nothing reads them, and they should be deleted.
+- **The working tree.** `frontend/src/pages/Beta.tsx` has two uncommitted fixes: a 401/403/404/405 from the public sign-up endpoint now reads as "Beta sign-up isn't live on this server yet" instead of leaking the backend's raw "Missing bearer token", and the Privacy Policy link in the consent label opens in a new tab so reading it no longer wipes a half-filled form.
+
+Shipping the release is: commit the working tree, run `0005`, set `ADMIN_EMAILS` and `GOOGLE_APP_TESTING` on DigitalOcean, delete the five debug files, merge `staging` into `production`, push. The ordered version is [DeveloperToDo.md §1](DeveloperToDo.md). Nothing applies migrations automatically.
 
 ## Documentation
 
@@ -46,7 +58,7 @@ supabase/    database migrations, the schema source of truth
 tests/       naming-template vectors both filename implementations must pass
 ```
 
-Both apps deploy from the `production` branch. Setup steps live in each app's README.
+Both apps deploy from the `production` branch — one repo, one branch, never split. Work lands on `staging` first and reaches the live site only when `staging` is merged into `production`. Setup steps live in each app's README.
 
 ## Plans and pricing
 
@@ -121,13 +133,26 @@ The fixed costs to plan for:
 
 ## What's next
 
-The owner's steps are in [DeveloperToDo.md](DeveloperToDo.md). On the code side:
+Two lists, because they need different hands. Nothing in the first list can be done without an account you own, and nothing in the second is a code change.
 
-1. **Payments.** Lemon Squeezy is chosen and named in the legal pages; checkout is still to build. The webhook (`POST /webhook/lemonsqueezy`) calls `grant_credits(user, kind, amount, ..., 'purchase', provider_reference)` for packs, and sets `subscriptions.plan`/`status`/`period_anchor` for subscriptions. The store, variant and signing-secret values the owner must collect first are in [DeveloperToDo.md §2.3](DeveloperToDo.md).
-2. **Cleanup release.** Remove the legacy `/api/drive/config`, `/raw-status` and `/organize` endpoints. Then, in a later migration, drop the v1 SQL functions that only the pre-document backend calls.
-3. **Nice to have.** A "re-sort" action for already-sorted files, `.xlsx`/`.pptx` support, and a Google Drive Picker.
+### Claude does next (code) — ask for these
 
-The closed beta runs in the meantime: `/beta` collects sign-ups, the owner's dashboard turns them into Google test users, and approved testers see a Lemon Squeezy discount code once one is configured.
+1. **Lemon Squeezy checkout and webhook.** *Blocked on the IDs in "You do next".* Hosted-checkout links on the plan cards, then `POST /webhook/lemonsqueezy` with HMAC signature verification, handling `order_created`, `subscription_created`, `subscription_updated`, `subscription_cancelled` and `subscription_expired`. Packs call `grant_credits(user, kind, amount, ..., 'purchase', provider_reference)`; subscriptions set `subscriptions.plan` / `status` / `period_anchor`. The plan ids in [`backend/src/config/plans.js`](backend/src/config/plans.js) are the mapping key, which is why each Lemon Squeezy variant should be named after its plan id.
+2. **Fix `schemaProblem()`** in `backend/src/repositories/usage.repo.js`. It blames *any* Supabase RPC error on a missing migration, so a dead or rotated API key boots the server saying "The database is missing supabase/migrations/0002_work_processes.sql (Invalid API key)" — sending you to re-run a migration that is already applied. It should report an auth failure as an auth failure.
+3. **Delete the five accidental debug JSON files** on `production`: `backend/h.json`, `backend/m.json`, `backend/p.json`, `frontend/r2.json`, `frontend/r3.json`. Saved `curl` output, committed by accident, read by nothing — or do it yourself with the `git rm` in [DeveloperToDo.md §1.1](DeveloperToDo.md).
+4. **Cleanup release.** Remove the legacy `/api/drive/config`, `/raw-status` and `/organize` endpoints. Then, in a later migration, drop the v1 SQL functions that only the pre-document backend calls.
+5. **Nice to have.** A "re-sort" action for already-sorted files, `.xlsx`/`.pptx` support, and a Google Drive Picker.
+
+### You do next (accounts, keys, money) — [DeveloperToDo.md](DeveloperToDo.md) has the steps
+
+1. **Ship the closed-beta release** ([§1](DeveloperToDo.md)), in order: run `0005_beta.sql` in the Supabase SQL editor, set the new DigitalOcean variables, merge `staging` into `production` and push, then check the deploy. Until this happens, `/beta` doesn't exist for anyone but you.
+2. **Check `SUPABASE_SERVICE_ROLE_KEY` on DigitalOcean.** You've moved to the new Supabase keys everywhere that's been verified, but nobody has confirmed this one. Judge it by **prefix** — it must start with `sb_secret_`, never by length. If it's still a legacy `eyJ…` key when you disable legacy keys, every `/api/*` request fails with "Invalid or expired token", all sorting stops, and `/health` stays green so nothing alerts you.
+3. **Collect the Lemon Squeezy values Claude needs** ([§2.3](DeveloperToDo.md)): the Store ID, one Variant ID per purchasable thing (9 paid plans, doubled where a yearly price exists, plus 6 packs), an API key and a webhook signing secret. Put the checkout on a **subdomain CNAME** — the apex `A` record stays on Vercel ([§2.1](DeveloperToDo.md)).
+4. **Confirm Drive watches now register** ([§4](DeveloperToDo.md)). Search Console + Cloud domain verification is recorded done; check whether webhooks work and, if so, move `AUTO_SYNC_INTERVAL_SECONDS` to `0`. Until that's confirmed, sorting stays on the polling fallback. Brand verification, restricted-scope verification and OAuth branding are still open.
+5. **Run the beta** ([§3](DeveloperToDo.md)): approve sign-ups into Google test users, set `BETA_DISCOUNT_PERCENT` and `BETA_DISCOUNT_CODE`, do the outreach.
+6. **Open business decisions** ([§6](DeveloperToDo.md)), plus the Google Cloud budget alert in [§7](DeveloperToDo.md).
+
+Once the release ships, the closed beta runs while checkout is built: `/beta` collects sign-ups, your dashboard turns them into Google test users, and approved testers see a Lemon Squeezy discount code once one is configured.
 
 **What a beta discount does to those margins.** The AI cost per file doesn't move when the price does, so a discount cuts margin far faster than it cuts price. At full allowance use:
 

@@ -1,18 +1,67 @@
 # DeveloperToDo — what only you can do
 
-Everything below needs your accounts (Supabase, Namecheap, Google, DigitalOcean, Vercel, Lemon Squeezy) or a business decision, so no code can do it for you. Work top to bottom: **section 1 has to happen in order before this release is pushed.** Each step says how to check that it worked.
+Everything below needs your accounts (Supabase, Namecheap, Google, DigitalOcean, Vercel, Lemon Squeezy) or a business decision, so no code can do it for you. Work top to bottom: **section 1 has to happen in that order.** Each step says how to check that it worked.
 
 Tick items off as you go. When a section is fully done, tell Claude, so the READMEs' status tables get updated.
 
-> **Since last time:** sections 1–9 of the previous list are done, and Claude has done the repository housekeeping (§8). What's left has moved to the top.
+The last section, [**What Claude will do when you say go**](#what-claude-will-do-when-you-say-go), is the other half of this list: the code work that's waiting on you. Nothing there needs your dashboards — it needs your word.
+
+---
+
+## 0. Where things stand — read this first
+
+As of 2026-09-20:
+
+| | State |
+|---|---|
+| **The code** | The whole closed-beta + Lemon Squeezy + VAT release is committed on **`staging`** (`c3d6635`). Two small `/beta` page fixes are still **uncommitted** in your working copy. |
+| **`production` branch** | Still `76eb2a6`, which is the **old** code plus five accidental debug JSON files (§1.1). None of this release is on it. |
+| **The live website** | `drivetag-ai.com` builds from `production`, so **there is no `/beta` page live**, no VAT line on `/plans`, and no beta banner. |
+| **The live API** | `api.drivetag-ai.com` is the old build too. `GET /api/plans` has no `pricesIncludeTax` field, and `POST /api/beta/signups` answers `401 Missing bearer token`, because the beta router doesn't exist on it. |
+| **Migration `0005_beta.sql`** | **Not run.** |
+| **Supabase API keys** | Migrated on the browser side. The live frontend bundle uses an `sb_publishable_` key, contains no legacy JWTs, and Supabase accepts it. Your local `frontend/.env` and `backend/.env` are on the new keys too. |
+| **DigitalOcean's `SUPABASE_SERVICE_ROLE_KEY`** | **Unconfirmed.** Nobody has looked. See the warning in §1.3 before you disable legacy keys. |
+| **Vercel `VITE_API_URL`** | Fixed. A build failed on it earlier today; it's set now. |
+
+So: the release is written and tested, and **nothing of it is live**. §1 is how it gets there.
+
+Done since the last version of this list:
+
+- [x] Supabase publishable / secret key swap — live frontend, local `frontend/.env`, local `backend/.env`.
+- [x] Vercel `VITE_API_URL` fixed (the failed build was missing it; the likeliest cause was the **Preview** environment scope not having the three `VITE_*` variables, which were set for Production only).
+- [~] Repository housekeeping (§8) — the branch and package rename are done; untracking `.claude/settings.local.json` is staged but uncommitted, and the five debug files are still there.
+- [x] Payment provider decided: Lemon Squeezy (§2).
 
 ---
 
 ## 1. Ship the beta release — order matters
 
-Production (`drivetag-ai.com` and `api.drivetag-ai.com`) deploys automatically whenever the `production` branch is pushed. This release needs a database migration, which must run **before** the push.
+Production (`drivetag-ai.com` and `api.drivetag-ai.com`) deploys automatically whenever the `production` branch is pushed. Both halves come from that one branch.
 
-### 1.1 Run migration `0005_beta.sql` in Supabase (before pushing)
+**Why this order and not another:**
+
+- **Database before backend.** If the backend deploys before `0005_beta.sql` has run, every beta route 500s and the boot log prints a `Schema problem` line.
+- **Backend configured before the frontend is merged.** Both deploy from the same push, and Vercel is usually faster than DigitalOcean. Without `ADMIN_EMAILS` set first, you get a live `/beta` page and no way to see who signed up on it.
+- **Both before you send a single outreach email.** §3.5 points strangers at `/beta`. Don't point them at it until step 1.5 passes.
+
+### 1.1 Delete the five accidental debug files (before merging)
+
+`production` has five files that were committed as "static JSON fixtures". They aren't fixtures. They're saved `curl` output — a `/health` response, an `Invalid or expired token` error, an `/api/plans` dump, a Supabase auth-settings dump and a Supabase `flow_state_not_found` error. Nothing in the codebase reads them, and they don't exist on `staging`, so merging won't remove them.
+
+- [ ] Remove them as part of the release commit:
+
+```bash
+git checkout production
+git pull origin production
+git rm backend/h.json backend/m.json backend/p.json frontend/r2.json frontend/r3.json
+git commit -m "Remove accidental debug JSON files"
+```
+
+Leave that branch checked out; step 1.4 continues from here.
+
+> The two uncommitted `/beta` fixes in your working copy belong on `staging` first. Ask Claude to commit them, or commit them yourself, before you merge — otherwise the release ships without them and the sign-up form shows the raw `Missing bearer token` error to anyone who hits it mid-deploy.
+
+### 1.2 Run migration `0005_beta.sql` in Supabase
 
 - [ ] Supabase dashboard → project `ckskwjtjydaqewwojsfj` → **SQL Editor** → **New query**.
 - [ ] Paste the **whole** of [`supabase/migrations/0005_beta.sql`](supabase/migrations/0005_beta.sql) and click **Run**.
@@ -40,9 +89,24 @@ select count(*) from public.beta_signups;
 
 Expect `0`.
 
-### 1.2 Set the new environment variables on DigitalOcean
+### 1.3 Check and set the DigitalOcean environment variables
 
-App → **Settings → App-Level Environment Variables**. All four are optional and everything fails closed without them, but without `ADMIN_EMAILS` you cannot see your own sign-ups.
+App → **Settings → App-Level Environment Variables**.
+
+**First, the one that can take the whole app down.**
+
+> ### ⚠️ Legacy Supabase keys — do not disable them yet
+>
+> You've moved the browser side to the new keys. The **server** side is unconfirmed.
+>
+> - [ ] Open `SUPABASE_SERVICE_ROLE_KEY` on DigitalOcean and look at how it **starts**.
+>   - Starts with **`sb_secret_`** → good, it's the new key.
+>   - Starts with **`eyJ`** → it's still a legacy JWT. Replace it with the `sb_secret_` key from Supabase → **Settings → API Keys**, and redeploy.
+> - **Judge it by the prefix, never by the length.** The two kinds of key are different lengths, and eyeballing "looks long enough" is how this gets missed.
+> - **Only after that is confirmed and redeployed** may you disable legacy keys in Supabase. If you disable them while DigitalOcean still holds a JWT, every `/api/*` request fails with `Invalid or expired token`, all sorting stops — and `/health` stays green, so nothing tells you.
+> - Worse, the failure lies about itself. `schemaProblem()` in `backend/src/repositories/usage.repo.js` attributes *any* Supabase RPC error to a missing migration, so a dead key prints `The database is missing supabase/migrations/0002_work_processes.sql (Invalid API key)` and sends you to re-run a migration that's been applied for weeks. That's a known defect and it's on Claude's list at the bottom of this file.
+
+Then the four new beta variables. All are optional and everything fails closed without them, but without `ADMIN_EMAILS` you cannot see your own sign-ups.
 
 | Variable | Value | What it does |
 |---|---|---|
@@ -51,27 +115,36 @@ App → **Settings → App-Level Environment Variables**. All four are optional 
 | `BETA_DISCOUNT_PERCENT` | leave unset for now | Beta tester discount, 1–90. Unset or `0` ⇒ no discount exists anywhere in the UI. |
 | `BETA_DISCOUNT_CODE` | leave unset for now | The Lemon Squeezy discount code. Set both, or neither (§3.4). |
 
-### 1.3 Push the release
+The rest of the variables are unchanged; the full list is in §7.
+
+### 1.4 Merge `staging` into `production` and push
+
+This is the step that actually deploys both halves. `staging` holds the entire release.
 
 ```bash
+git merge staging
 git push origin production
 ```
 
-### 1.4 Check the deploy (about 5 minutes after pushing)
+(You're still on `production` from step 1.1. There's no conflict: `staging` and `production` last shared `2eabbb7`, and nothing on `production` since then touches a file `staging` changed.)
 
-- [ ] DigitalOcean → **Runtime Logs**. No `Schema problem` line. If you see one, 1.1 didn't run.
+### 1.5 Verify the deploy (about 5 minutes after pushing)
+
+- [ ] DigitalOcean → **Runtime Logs**. No `Schema problem` line. If you see one, 1.2 didn't run — or the service key is wrong (see the warning box; the message will blame a migration either way).
 - [ ] `https://api.drivetag-ai.com/health` returns `{"status":"ok"}`.
-- [ ] `https://drivetag-ai.com/beta` loads and the form submits.
-- [ ] Sign in as yourself → `/dashboard` shows the **Beta sign-ups** card with your test submission in it. Sign in as anyone else and the card must not appear.
-- [ ] `https://drivetag-ai.com/plans` shows "Excludes VAT and sales tax" next to the prices, and names Lemon Squeezy in the note underneath.
+- [ ] `https://api.drivetag-ai.com/api/plans` now contains `"pricesIncludeTax":false`. If that field is missing, the backend hasn't finished deploying.
+- [ ] `POST https://api.drivetag-ai.com/api/beta/signups` no longer answers `Missing bearer token`. That endpoint is public; an auth error means the old build is still up.
+- [ ] `https://drivetag-ai.com/beta` loads and the form **submits successfully**. Submit a test sign-up with your own email.
+- [ ] Sign in as yourself → `/dashboard` shows the **Beta sign-ups** card with that test submission in it. Sign in as anyone else and the card must not appear.
+- [ ] `https://drivetag-ai.com/plans` shows "Excludes VAT/sales tax" next to the prices, and names Lemon Squeezy in the note underneath.
 
 ---
 
 ## 2. Lemon Squeezy
 
-Lemon Squeezy is now named in the legal pages as the **Merchant of Record**: the buyer's contract of sale is with them, they collect and remit VAT and sales tax, and they handle refunds and chargebacks. DriveTag never sees a card number. Their legal entity is **Sold through Link, LLC** (formerly Lemon Squeezy LLC, a Utah limited liability company) — that exact name is in `/privacy` and `/terms`. If they rename it again, those two pages are the only places to change.
+Lemon Squeezy is named in the legal pages as the **Merchant of Record**: the buyer's contract of sale is with them, they collect and remit VAT and sales tax, and they handle refunds and chargebacks. DriveTag never sees a card number. Their legal entity is **Sold through Link, LLC** (formerly Lemon Squeezy LLC, a Utah limited liability company) — that exact name is in `/privacy` and `/terms`. If they rename it again, those two pages are the only places to change.
 
-Checkout itself is **not built yet**; the buttons still say "Coming soon". Everything below is the groundwork, so that building checkout is a matter of filling in IDs rather than making decisions.
+Checkout itself is **not built**. The buttons say "Coming soon". Everything below is the groundwork, so that building checkout is a matter of filling in IDs rather than making decisions. The build itself is Claude's job and is waiting on §2.3.
 
 ### 2.1 ⚠️ Do not point the apex domain at Lemon Squeezy
 
@@ -90,10 +163,10 @@ The apex `A` record, the `www` CNAME and the `api` CNAME all stay exactly as the
 
 - [ ] Store name and logo — this is what buyers see at checkout and on the receipt.
 - [ ] Payout details, and the business/tax information they ask for. They can't pay you out without it, and they can't act as Merchant of Record without knowing who you are.
-- [ ] Create the products. You need **one variant per purchasable thing**: 9 paid plans (× 2 where a yearly price exists) plus 6 top-up packs. The ids are in [`backend/src/config/plans.js`](backend/src/config/plans.js) — name each variant after the plan id (`complete-studio`, `docs-pack-1000`, …) so a webhook can map a sale to a plan later without guesswork.
-- [ ] Enter every price **excluding tax**. The website now states that prices exclude VAT and sales tax and that Lemon Squeezy adds the local rate at checkout. Tax-inclusive prices there would contradict the site.
+- [ ] Create the products. You need **one variant per purchasable thing**: 9 paid plans (× 2 for the 6 that have a yearly price — the three Enterprise tiers are monthly only) plus 6 top-up packs. That's 21 variants. The ids are in [`backend/src/config/plans.js`](backend/src/config/plans.js) — name each variant after the plan or pack id (`complete-studio`, `docs-pack-1000`, …). **This is what makes the webhook mapping unambiguous;** without it, matching a sale to a plan is guesswork.
+- [ ] Enter every price **excluding tax**. The website states that prices exclude VAT and sales tax and that Lemon Squeezy adds the local rate at checkout. Tax-inclusive prices there would contradict the site.
 
-### 2.3 What Claude will need to build checkout
+### 2.3 The four values Claude needs before checkout can be built
 
 Collect these, keep them out of git, and hand them over when you want that phase:
 
@@ -104,7 +177,7 @@ Collect these, keep them out of git, and hand them over when you want that phase
 | API key | Settings → API |
 | Webhook signing secret | Settings → Webhooks, when you create the endpoint |
 
-The endpoint will be `https://api.drivetag-ai.com/webhook/lemonsqueezy`, subscribing to `subscription_created`, `subscription_updated`, `subscription_cancelled`, `subscription_expired` and `order_created`.
+The endpoint will be `https://api.drivetag-ai.com/webhook/lemonsqueezy`, subscribing to `order_created`, `subscription_created`, `subscription_updated`, `subscription_cancelled` and `subscription_expired`. What Claude builds on top of them is spelled out at the bottom of this file.
 
 ---
 
@@ -115,11 +188,13 @@ While the Google OAuth app is in **Testing** status, DriveTag is invite-only whe
 | Google's rule | What it means for you |
 |---|---|
 | Max **100** test users | Every tester's email is added by hand under **Google Auth Platform → Audience → Test users**. There is no API for that list; copy-paste is the only way. |
-| Refresh tokens expire after **7 days** | Sorting silently stops about once a week until the tester reconnects at `drivetag-ai.com/connect`. The dashboard now warns them from day 5 (§1.2's `GOOGLE_APP_TESTING`). |
+| Refresh tokens expire after **7 days** | Sorting silently stops about once a week until the tester reconnects at `drivetag-ai.com/connect`. The dashboard warns them from day 5 (§1.3's `GOOGLE_APP_TESTING`). |
 | Unverified consent screen | Testers see "Google hasn't verified this app" and must choose **Advanced → Continue**. Tell them before they hit it, or you lose them there. |
 | Only listed emails can sign in | Anyone not on the list is refused by Google before they ever reach DriveTag. This is exactly why you collect emails first. |
 
 None of this changes when verification is *submitted*. It changes when verification is *granted* (§4). Run both in parallel.
+
+**Nothing in this section works until §1 is finished** — `/beta` isn't on the live site yet.
 
 ### 3.1 The flow, end to end
 
@@ -235,7 +310,8 @@ Partly done. What remains is the long pole for a public launch.
 - [ ] Submit for **brand verification**.
 - [ ] Submit for **restricted-scope verification**, because of the full `drive` scope.
 - [ ] Expect Google to ask for an annual **CASA** security assessment. Third-party estimates are $500–$4,500 a year; budget time and money.
-- [ ] The day verification is granted: set `GOOGLE_APP_TESTING=false` on DigitalOcean and redeploy, so testers stop being told about a 7-day expiry that no longer applies. Then consider `AUTO_SYNC_INTERVAL_SECONDS=0` (§7).
+- [ ] The day **OAuth app** verification is granted: set `GOOGLE_APP_TESTING=false` on DigitalOcean and redeploy, so testers stop being told about a 7-day expiry that no longer applies.
+- [ ] Separately from the above: Drive **webhooks** are gated on Cloud Console *domain* verification, not on OAuth app verification, and that is already recorded as done. So check the runtime logs for a watch registering successfully; once one does, you can drop `AUTO_SYNC_INTERVAL_SECONDS` to `0` (§7). Until you see it, leave polling on.
 - [ ] Optional, costs money: to make Google's sign-in screen say "DriveTag AI" instead of `ckskwjtjydaqewwojsfj.supabase.co`, set up a Supabase custom domain `auth.drivetag-ai.com` ([frontend/README.md](frontend/README.md#google-oauth-branding--verification)).
 
 ---
@@ -264,7 +340,7 @@ select public.admin_grant_document_credits('client@example.com', 250, 'Document 
 
 ```sql
 -- Take credits back. Refused, with a readable message, if it would go below zero —
--- and in that case nothing is written to the grants log either.
+-- and in that case nothing is written to the grants log either. (Needs 0005.)
 select public.admin_grant_document_credits('client@example.com', -250, 'Refund, invoice #13');
 ```
 
@@ -283,14 +359,14 @@ select public.admin_mark_beta_added('client@example.com');
 delete from public.beta_signups where lower(email) = lower('client@example.com');
 ```
 
-Prices and allowances live in `backend/src/config/plans.js`. Changing a number is a code change; adding a plan id also needs a migration.
+The last three need `0005_beta.sql` (§1.2). Prices and allowances live in `backend/src/config/plans.js`. Changing a number is a code change; adding a plan id also needs a migration.
 
 ---
 
 ## 6. Business decisions still open
 
 - [x] **Payment provider** — Lemon Squeezy (§2).
-- [ ] **Build checkout.** Needs §2.3's IDs. Until then every purchase is manual (§5).
+- [ ] **Build checkout.** Needs §2.3's four values. Until then every purchase is manual (§5).
 - [ ] **The beta discount number** (§3.4). Decide before you advertise it.
 - [ ] **Final prices.** Everything shown today is a placeholder; the margins behind them are in [README.md](README.md). Confirm or adjust.
 - [ ] **Public launch vs invite-only.** Public needs §4's verification and CASA. Invite-only can stay on the test-user list indefinitely, capped at 100.
@@ -316,26 +392,56 @@ Namecheap → `drivetag-ai.com` → **Domain** tab → **Redirect Email**: `supp
 | Variable | Value |
 |---|---|
 | `NODE_ENV` | `production` |
+| `SUPABASE_SERVICE_ROLE_KEY` | must start `sb_secret_` — **unconfirmed, see §1.3** |
+| `SUPABASE_ANON_KEY` | the `sb_publishable_` key |
 | `FRONTEND_URL` | `https://drivetag-ai.com` |
 | `CORS_ORIGINS` | `https://drivetag-ai.com` |
 | `GOOGLE_OAUTH_REDIRECT_URI` | `https://api.drivetag-ai.com/api/auth/google/callback` |
 | `DRIVE_WEBHOOK_URL` | `https://api.drivetag-ai.com/webhook/drive` |
 | `AUTO_SYNC_INTERVAL_SECONDS` | `60` (polling) until §4's verification lands |
 | `MAX_CONCURRENT_AI_JOBS` | `10` on a 1 GB instance; the default 20 is fine at 2 GB+ |
-| `ADMIN_EMAILS` | §1.2 |
-| `GOOGLE_APP_TESTING` | §1.2 |
+| `ADMIN_EMAILS` | §1.3 |
+| `GOOGLE_APP_TESTING` | §1.3 |
 | `BETA_DISCOUNT_PERCENT`, `BETA_DISCOUNT_CODE` | §3.4 |
 
-**Vercel** — Settings → Environment Variables (Production): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_URL=https://api.drivetag-ai.com`. Analytics enabled. After changing any variable, redeploy with **"Use existing build cache" turned off** — the values are baked in at build time.
+The complete list, with what each one does, is in [backend/README.md](backend/README.md).
 
-**Supabase** — Site URL `https://drivetag-ai.com`; redirect URLs `https://drivetag-ai.com/**` and `http://localhost:5173/**`. Still open: **before the end of 2026**, migrate off the legacy `anon`/`service_role` keys (create the publishable + secret keys, set them in Vercel and DigitalOcean, redeploy both, then disable the legacy ones).
+**Vercel** — Settings → Environment Variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (the `sb_publishable_` key) and `VITE_API_URL=https://api.drivetag-ai.com`. Analytics enabled.
+
+- Set all three for **every** environment scope you build in, not just Production. A build failed earlier today with "Missing VITE_API_URL", and a Preview build without them will fail the same way — `vite build` refuses to run without all three.
+- After changing any variable, redeploy with **"Use existing build cache" turned off** — the values are baked in at build time.
+
+**Supabase** — Site URL `https://drivetag-ai.com`; redirect URLs `https://drivetag-ai.com/**` and `http://localhost:5173/**`.
+
+- [x] New publishable + secret API keys created, and set on the frontend and in both local `.env` files.
+- [ ] Confirm DigitalOcean's `SUPABASE_SERVICE_ROLE_KEY` is the `sb_secret_` one (§1.3).
+- [ ] **Only then**, and before the end of 2026, disable the legacy `anon` / `service_role` keys.
 
 **AI provider** — billing stays enabled on the project behind the key (on the free tier Google may use submitted files to improve its products, which the Privacy Policy rules out). Still worth doing: a **budget alert** in Google Cloud Console → Billing → Budgets & alerts, say $50/month. Google's price for this model doubles on 2027-01-01, and README.md's per-file costs already assume that.
 
 ---
 
-## 8. Repository housekeeping — done
+## 8. Repository housekeeping — two items left
 
-- [x] `.claude/settings.local.json` untracked and added to `.gitignore` (the file stays on your machine).
+- [ ] `.claude/settings.local.json` — added to `.gitignore` (line 34); `git rm --cached` has been run, so untracking is staged in the working tree but **not yet committed** (the file stays on your machine).
 - [x] Remote branch `production-vdsjba` deleted — it pointed at `f7b33a0`, already part of `production`, so nothing was lost.
 - [x] `frontend/package.json` renamed from `temp-front` to `drivetag-frontend`.
+- [ ] The five debug JSON files on `production` (§1.1) — not done, and it's the one piece of housekeeping left.
+
+---
+
+## What Claude will do when you say go
+
+Code work, waiting on you. Nothing here needs a dashboard; it needs a decision or a value. Ask for them by name.
+
+| # | Ask for | What you hand over first | What you get |
+|---|---|---|---|
+| 0 | **Commit the two `/beta` fixes onto `staging`** | nothing | The auth-shaped-error message and the new-tab consent link in `frontend/src/pages/Beta.tsx`, committed before the merge. Do this first — see §1.1. |
+| 1 | **Lemon Squeezy checkout + webhook** | §2.3's four values: Store ID, the 21 variant IDs, an API key, the webhook signing secret | Hosted-checkout links on every plan card and top-up pack, and `POST /webhook/lemonsqueezy` with HMAC signature verification. Handlers for `order_created` (calls `grant_credits(...)` for packs), `subscription_created` / `subscription_updated` / `subscription_cancelled` / `subscription_expired` (set `subscriptions.plan`, `status` and `period_anchor`). Manual §5 SQL stops being the only way to sell anything. |
+| 2 | **Fix the `schemaProblem()` lie** | nothing | `backend/src/repositories/usage.repo.js` currently blames a missing migration for *any* Supabase RPC error, so a bad API key reads as "run 0002". It'll tell the difference between an auth failure and an absent function. |
+| 3 | **Delete the five debug JSON files** | nothing — or do it yourself with §1.1's command | The `git rm` in §1.1, committed on `production` as part of the release. |
+| 4 | **The legacy-endpoint cleanup release** | nothing | Removes the transitional single-folder shims — `/api/drive/config`, `/api/drive/raw-status`, `/api/drive/organize`, and the `config` / `subscription` / `entitled` fields on `/api/me`. They map onto your first work process and nothing in the current frontend calls them. Ship it once `production` and `staging` are level, not during a deploy window. |
+| 5 | **`helmet` and app-wide rate limiting** | nothing | Security headers plus a limiter on every route. Today only `POST /api/beta/signups` is limited, by an in-memory single-instance Map. |
+| 6 | **Re-sorting an already-sorted file** | a decision on what "re-sort" should mean | `processed_files` is unique on `(user_id, file_id)`, so a file is sorted automatically at most once and there is no "run it again" action. |
+
+Ask for #0 and #3 together, as part of the §1 release. Ask for #1 when the Lemon Squeezy store is set up. #2, #5 and #6 can be done any time.

@@ -50,6 +50,9 @@ function fieldErrorsFromApi(err: unknown): Record<string, string> {
   return errors;
 }
 
+/** Statuses that mean "this server doesn't have the public signup route", not "you aren't signed in". */
+const AUTH_SHAPED = new Set([401, 403, 404, 405]);
+
 const WHAT_TO_EXPECT = [
   'You’ll see a “Google hasn’t verified this app” screen when you sign in. Choose Advanced → Continue. It goes away once Google finishes reviewing us.',
   'While we’re in review, Google expires Drive access every 7 days, so you’ll reconnect about once a week. We’ll remind you in the app.',
@@ -132,6 +135,14 @@ export default function Beta() {
         setErrors(fieldErrorsFromApi(err));
       } else if (err instanceof ApiError && err.code === 'rate_limited') {
         setErrors({ form: err.message });
+      } else if (err instanceof ApiError && AUTH_SHAPED.has(err.status)) {
+        // This endpoint is public and sends no token, so an auth-shaped refusal can only mean the
+        // server predates the beta routes. On the older backend /api/beta/* falls past the router
+        // that mounts it and lands on the authenticated one, which answers "Missing bearer token"
+        // — meaningless to someone filling in a signup form, and not their problem to solve.
+        setErrors({
+          form: 'Beta sign-up isn’t live on this server yet. Try again in a few minutes, or email support@drivetag-ai.com and we’ll add you by hand.',
+        });
       } else {
         setErrors({ form: errorMessage(err, 'Couldn’t submit your request. Please try again.') });
       }
@@ -298,11 +309,15 @@ export default function Beta() {
                   <span>
                     I agree DeltaCo Creatives may use this email to invite me to the DriveTag AI beta and contact me
                     about it.{' '}
+                    {/* New tab on purpose: reading what you're consenting to shouldn't cost you the
+                        half-filled form behind it. Announced, so it isn't a surprise. */}
                     <Link
                       to="/privacy"
+                      target="_blank"
+                      rel="noreferrer"
                       className="font-semibold text-ink-soft underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-lavender/60"
                     >
-                      Privacy Policy
+                      Privacy Policy<span className="sr-only"> (opens in a new tab)</span>
                     </Link>
                     .
                   </span>
