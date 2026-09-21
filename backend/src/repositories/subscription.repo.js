@@ -86,3 +86,46 @@ export async function applySubscriptionState({
   if (error) throw new Error(`Failed to apply subscription state: ${error.message}`);
   return data;
 }
+
+/**
+ * Resolves an email to { id, email, createdAt } via admin_user_lookup (0007), or null
+ * when no account has that address. Case-insensitive. This is an email-enumeration
+ * surface (the SQL function's own comment says so) — service_role only, and callable
+ * here only through admin-gated routes (requireAuth + requireAdmin).
+ */
+export async function adminUserLookup(email) {
+  const { data, error } = await supabase.rpc("admin_user_lookup", { p_email: email }).maybeSingle();
+  if (error) throw new Error(`Failed to look up user: ${error.message}`);
+  if (!data) return null;
+  return { id: data.user_id, email: data.email, createdAt: data.created_at };
+}
+
+/**
+ * Sets a user's plan/status via admin_set_plan_by_id (0007) — the backend-reachable
+ * sibling of admin_set_plan (0002, email-keyed, SQL-editor-only). Delegates entirely to
+ * apply_subscription_state with a NULL provider and null provider ids, so it validates
+ * p_plan/p_status and applies the same period_anchor rule as every other write path. Null, not
+ * 'manual': apply_subscription_state coalesces it, so an existing Lemon Squeezy subscriber keeps
+ * 'lemonsqueezy' instead of being relabelled every time the owner nudges their plan.
+ * Returns the updated subscriptions row.
+ */
+export async function adminSetPlanById(userId, plan, status, restartPeriod) {
+  const { data, error } = await supabase
+    .rpc("admin_set_plan_by_id", { p_user_id: userId, p_plan: plan, p_status: status, p_restart_period: restartPeriod })
+    .maybeSingle();
+
+  if (error) {
+    if (/invalid_plan/i.test(error.message)) {
+      const invalid = new Error(error.message);
+      invalid.code = "invalid_plan";
+      throw invalid;
+    }
+    if (/invalid_status/i.test(error.message)) {
+      const invalid = new Error(error.message);
+      invalid.code = "invalid_status";
+      throw invalid;
+    }
+    throw new Error(`Failed to set plan: ${error.message}`);
+  }
+  return data;
+}

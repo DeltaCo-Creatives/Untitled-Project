@@ -2,6 +2,7 @@ import { env } from "../config/env.js";
 import { HttpError } from "../utils/httpError.js";
 import { logger } from "../utils/logger.js";
 import { findByEmail, listSignups, setAdded, setNotes, upsertSignup } from "../repositories/betaSignup.repo.js";
+import { getBetaDiscount } from "./settings.service.js";
 
 // Conservative: exactly one "@", at least one "." in the domain part.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -21,7 +22,8 @@ export function isAdmin(email) {
 
 /** A percent (1-90) AND a non-empty code are both required for the beta discount to exist. */
 export function discountEnabled() {
-  return env.beta.discountPercent >= 1 && env.beta.discountPercent <= 90 && Boolean(env.beta.discountCode);
+  const { percent, code } = getBetaDiscount();
+  return percent >= 1 && percent <= 90 && Boolean(code);
 }
 
 /**
@@ -44,7 +46,8 @@ export async function betaStatusFor(email) {
 
   const tester = Boolean(signup?.added_to_google);
   if (!tester || !discountEnabled()) return { tester, discountPercent: 0, discountCode: null };
-  return { tester, discountPercent: env.beta.discountPercent, discountCode: env.beta.discountCode };
+  const { percent, code } = getBetaDiscount();
+  return { tester, discountPercent: percent, discountCode: code };
 }
 
 /**

@@ -34,6 +34,13 @@ mock.module("../src/config/env.js", {
   namedExports: { env, productionConfigProblems: () => [] },
 });
 
+// services/lemonSqueezy.service.js now reads the store/variants through
+// services/settings.service.js, which (on a cache miss/DB error) falls back to env.* —
+// exactly the mocked `env` above. This stub just keeps settings.service.js's repository
+// call from constructing a real Supabase client at import time; app_settings is never
+// reachable here, so every setting resolves from env, same as before this route existed.
+mock.module("../src/lib/supabase.js", { namedExports: { supabase: {} } });
+
 let currentUser = { id: BUYER_ID, email: "buyer@example.com" };
 mock.module("../src/middleware/requireAuth.js", {
   namedExports: {
@@ -175,4 +182,20 @@ test("a non-string item id is 400 rather than a coerced lookup", async () => {
     const res = await post({ item });
     assert.equal(res.status, 400, `${JSON.stringify(item)} must be rejected`);
   }
+});
+
+test("a monthly-only plan cannot be bought yearly, even when a variant id IS configured for it", async () => {
+  // The three Enterprise tiers have no yearly price on the website. Configure the stray variant on
+  // purpose — without the billing guard this resolves and sells a plan at a price we never advertised.
+  env.lemonSqueezy.variants = { ...env.lemonSqueezy.variants, "enterprise-yearly": "999999" };
+
+  const res = await post({ item: "enterprise", billing: "yearly" });
+  assert.equal(res.status, 400, "a monthly-only plan must not resolve a yearly checkout");
+  assert.equal((await res.json()).code, "unknown_item");
+
+  // The same plan on its real interval still works, so the guard is about the interval, not the plan.
+  env.lemonSqueezy.variants = { ...env.lemonSqueezy.variants, enterprise: "888888" };
+  const monthly = await post({ item: "enterprise" });
+  assert.equal(monthly.status, 200);
+  assert.match((await monthly.json()).url, /\/checkout\/buy\/888888\?/);
 });

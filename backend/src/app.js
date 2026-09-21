@@ -11,6 +11,7 @@ import plansRouter from "./routes/plans.routes.js";
 import processesRouter from "./routes/processes.routes.js";
 import betaRouter from "./routes/beta.routes.js";
 import checkoutRouter from "./routes/checkout.routes.js";
+import adminRouter from "./routes/admin.routes.js";
 import { rateLimit } from "./middleware/rateLimit.js";
 import { notFound, errorHandler } from "./middleware/errorHandler.js";
 
@@ -62,6 +63,10 @@ export function createApp() {
   // Before accountRouter for the same reason: POST /api/beta/signups is public.
   app.use("/api/beta", betaRouter);
   app.use("/api/checkout", checkoutRouter);
+  // Before accountRouter (each admin route re-checks requireAdmin itself; mounting order
+  // just avoids accountRouter's own requireAuth doing a pointless token check on a path
+  // it has no handler for).
+  app.use("/api/admin", adminRouter);
   app.use("/api", accountRouter);
 
   app.use(notFound);

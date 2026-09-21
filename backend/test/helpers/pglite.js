@@ -17,6 +17,7 @@ const MIGRATION_FILES = [
   "0004_documents.sql",
   "0005_beta.sql",
   "0006_checkout.sql",
+  "0007_admin.sql",
 ];
 
 // Mirrors Supabase's own project setup, not anything our migrations create:
@@ -27,6 +28,10 @@ const MIGRATION_FILES = [
 // - Postgres itself grants EXECUTE on every new function to PUBLIC by default, which
 //   is exactly what each migration's own `revoke all ... from public, anon, authenticated`
 //   statements undo — so nothing extra is needed here for functions.
+// - service_role can also read auth.* directly on a real Supabase project (that's how
+//   admin_user_lookup, 0007, is able to query auth.users under service_role — none of
+//   0001-0006's functions needed this, since the ones that touch auth.users are all
+//   SQL-editor-only, run as the table owner, never as service_role).
 const BOOTSTRAP_SQL = `
   create role anon nologin;
   create role authenticated nologin;
@@ -38,12 +43,17 @@ const BOOTSTRAP_SQL = `
   create schema auth;
   create table auth.users (
     id uuid primary key default gen_random_uuid(),
-    email text
+    email text,
+    -- Real Supabase's auth.users has this; admin_user_lookup (0007) reads it.
+    created_at timestamptz not null default now()
   );
   create or replace function auth.uid() returns uuid
   language sql stable as $$
     select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
   $$;
+  -- Deliberately NOT granting service_role access to auth.* here: real Supabase's defaults are
+  -- not ours to assume, and admin_user_lookup is SECURITY DEFINER precisely so it never needs them.
+  -- If a future function only passes because of a grant invented in this mock, it will fail in production.
 `;
 
 function readMigration(file) {
@@ -52,8 +62,8 @@ function readMigration(file) {
 
 /**
  * A fresh in-memory Postgres with 0001 -> 0002 -> 0003 -> 0004 -> 0005 -> 0006 ->
- * 0004 -> 0005 -> 0006 applied (the repeated 0004/0005/0006 runs are the idempotency
- * check: they must not error or change behaviour).
+ * 0007 -> 0004 -> 0005 -> 0006 -> 0007 applied (the repeated 0004/0005/0006/0007
+ * runs are the idempotency check: they must not error or change behaviour).
  */
 export async function createTestDb() {
   const db = new PGlite();
@@ -61,10 +71,11 @@ export async function createTestDb() {
   for (const file of MIGRATION_FILES) {
     await db.exec(readMigration(file));
   }
-  // Re-run the last three once more: must be a no-op, not an error.
+  // Re-run the last four once more: must be a no-op, not an error.
   await db.exec(readMigration("0004_documents.sql"));
   await db.exec(readMigration("0005_beta.sql"));
   await db.exec(readMigration("0006_checkout.sql"));
+  await db.exec(readMigration("0007_admin.sql"));
   return db;
 }
 

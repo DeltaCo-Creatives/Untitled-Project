@@ -11,6 +11,7 @@ import Plans from './pages/Plans';
 import Beta from './pages/Beta';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
+import Admin from './pages/Admin';
 import Connect from './pages/Connect';
 import ProcessEditor from './pages/ProcessEditor';
 import CheckoutSuccess from './pages/CheckoutSuccess';
@@ -46,6 +47,7 @@ function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/admin" element={<Admin />} />
             <Route path="/connect" element={<Connect />} />
             <Route path="/processes/new" element={<ProcessEditor />} />
             <Route path="/processes/:id" element={<ProcessEditor />} />
