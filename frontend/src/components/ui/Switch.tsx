@@ -7,6 +7,12 @@ interface SwitchProps {
   onChange: (checked: boolean) => void;
   /** Accessible name, e.g. "Turn on automatic sorting". */
   label: string;
+  /**
+   * Id of the element describing what this switch does. A switch whose consequences are explained in
+   * adjacent prose needs that prose associated with it, or a screen-reader user hears only the label
+   * and has to hunt for the explanation.
+   */
+  describedBy?: string;
   disabled?: boolean;
   busy?: boolean;
   size?: 'sm' | 'md';
@@ -18,7 +24,7 @@ const SIZES = {
 };
 
 /** The pastel on/off switch with an elastic knob. */
-export function Switch({ checked, onChange, label, disabled = false, busy = false, size = 'md' }: SwitchProps) {
+export function Switch({ checked, onChange, label, describedBy, disabled = false, busy = false, size = 'md' }: SwitchProps) {
   const knobRef = useRef<HTMLSpanElement>(null);
   const placed = useRef(false);
   const dims = SIZES[size];
@@ -45,6 +51,7 @@ export function Switch({ checked, onChange, label, disabled = false, busy = fals
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      aria-describedby={describedBy}
       // Busy stays focusable (aria-disabled, clicks ignored): a native disabled would drop keyboard focus to <body>.
       aria-disabled={busy || undefined}
       onClick={() => {

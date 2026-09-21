@@ -250,6 +250,99 @@ export interface BetaSignupPatch {
   notes?: string;
 }
 
+// ---------------------------------------------------------------- admin
+
+/** Where an effective setting's current value comes from — the whole point of the owner page. */
+export type AdminSettingSource = 'database' | 'environment' | 'default';
+
+export interface AdminSettingEntry<T> {
+  value: T;
+  source: AdminSettingSource;
+}
+
+/** The only settings the owner dashboard can read or write — an allow-list, never free-form. */
+export interface AdminSettingsValues {
+  betaDiscountPercent: number;
+  betaDiscountCode: string;
+  googleAppTesting: boolean;
+  lemonSqueezyStore: string;
+  /** Our plan/pack id -> Lemon Squeezy numeric variant id (as a string of digits). */
+  lemonSqueezyVariants: Record<string, string>;
+}
+
+export type AdminSettingKey = keyof AdminSettingsValues;
+
+export type AdminSettings = { [K in AdminSettingKey]: AdminSettingEntry<AdminSettingsValues[K]> };
+
+export interface AdminSettingsResponse {
+  settings: AdminSettings;
+  /** Never the admin email list itself — a count is enough to confirm ADMIN_EMAILS is set. */
+  readOnly: { adminEmails: number };
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  createdAt: string;
+  plan: string;
+  /** The subscriptions row's status (active/past_due/cancelled/expired), or null for an account
+   * that has an auth user but never connected Drive — it has no subscriptions row yet. */
+  status: string | null;
+  /** Same shape as /api/me's usage; null alongside `status` for an account with no subscriptions row yet. */
+  usage: Usage | null;
+}
+
+export interface AdminUserLookupResponse {
+  user: AdminUser | null;
+}
+
+export interface AdminSetPlanInput {
+  email: string;
+  plan: string;
+  status?: string;
+  restartPeriod?: boolean;
+}
+
+export interface AdminGrantCreditsInput {
+  email: string;
+  kind: 'image' | 'document';
+  amount: number;
+  reason: string;
+}
+
+const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
+  betaDiscountPercent: { value: 0, source: 'default' },
+  betaDiscountCode: { value: '', source: 'default' },
+  googleAppTesting: { value: false, source: 'default' },
+  lemonSqueezyStore: { value: '', source: 'default' },
+  lemonSqueezyVariants: { value: {}, source: 'default' },
+};
+
+/** Deploy-window safety, exactly like withKindUsage/withPlanFamilies: fills in any settings key an
+ * in-progress backend deploy hasn't shipped a value for yet, so a partial response never blanks a
+ * whole section. */
+function withAdminDefaults(body: AdminSettingsResponse): AdminSettingsResponse {
+  return {
+    readOnly: { adminEmails: body.readOnly?.adminEmails ?? 0 },
+    settings: { ...DEFAULT_ADMIN_SETTINGS, ...body.settings },
+  };
+}
+
+/**
+ * True for a 404 (route doesn't exist yet) or 401 from an `/api/admin/*` call — the signal that
+ * this frontend has reached a backend build that predates the owner-settings API, not a real auth
+ * or business error. 403 (`not_admin`) is deliberately excluded: that's a real answer from a
+ * backend that does have the routes. A 404 that carries an error `code` (e.g. `user_not_found`
+ * from looking up an account) is also excluded: that's Express routing the request successfully
+ * into a handler that legitimately answered "not found" — the generic missing-route 404 (from
+ * `middleware/errorHandler.js`'s `notFound`) never has a `code` and always reads "No route for …".
+ */
+export function isAdminApiMissing(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  if (err.status === 401) return true;
+  return err.status === 404 && !err.code && err.message.startsWith('No route for');
+}
+
 // ---------------------------------------------------------------- work processes
 
 export interface TagField {
@@ -667,5 +760,28 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ retryFailed }),
       }),
+  },
+
+  /** Owner-only (`/admin`). The backend re-checks admin status on every one of these regardless of
+   * what the frontend shows — `me.admin` only decides whether to render the page. */
+  admin: {
+    settings: () => request<AdminSettingsResponse>('/api/admin/settings').then(withAdminDefaults),
+    /** Partial body: only the keys being changed. Returns the full fresh settings (every key's
+     * source, not just the one that changed), same shape as `settings()`. */
+    updateSettings: (patch: Partial<AdminSettingsValues>) =>
+      request<AdminSettingsResponse>('/api/admin/settings', { method: 'PUT', body: JSON.stringify(patch) }).then(
+        withAdminDefaults,
+      ),
+    /** Clears a database override so the environment variable (or built-in default) applies again. */
+    clearSetting: (key: AdminSettingKey) =>
+      request<AdminSettingsResponse>(`/api/admin/settings/${encodeURIComponent(key)}`, { method: 'DELETE' }).then(
+        withAdminDefaults,
+      ),
+    lookupUser: (email: string) => request<AdminUserLookupResponse>(`/api/admin/users${query({ email })}`),
+    setUserPlan: (body: AdminSetPlanInput) =>
+      request<{ user: AdminUser }>('/api/admin/users/plan', { method: 'POST', body: JSON.stringify(body) }),
+    /** `amount` may be negative (taking credits back); 400 `insufficient_credits` if that would go below zero. */
+    grantCredits: (body: AdminGrantCreditsInput) =>
+      request<{ user: AdminUser }>('/api/admin/users/credits', { method: 'POST', body: JSON.stringify(body) }),
   },
 };

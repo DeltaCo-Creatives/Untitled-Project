@@ -39,6 +39,12 @@ mock.module("../src/config/env.js", {
 const logger = { info: mock.fn(), warn: mock.fn(), error: mock.fn() };
 mock.module("../src/utils/logger.js", { namedExports: { logger } });
 
+// services/lemonSqueezy.service.js now resolves store/variants through
+// services/settings.service.js, which falls back to env.* (the mock above) whenever its
+// repository call fails — this stub just keeps that call from building a real Supabase
+// client at import time, so nothing here touches app_settings or a real database.
+mock.module("../src/lib/supabase.js", { namedExports: { supabase: {} } });
+
 // Simulates just enough of grant_credits' real idempotency (0006) to test that the route
 // passes a stable, repeatable reference: a reference seen before is a no-op that returns the
 // already-granted balance, exactly like the SQL function is supposed to. Real end-to-end

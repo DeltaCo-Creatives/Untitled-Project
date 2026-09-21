@@ -7,6 +7,7 @@ import { isStaleClaim, listRecent } from "../repositories/processedFile.repo.js"
 import { listForUser } from "../services/processes.service.js";
 import { deleteAccount } from "../services/account.service.js";
 import { betaStatusFor, isAdmin } from "../services/beta.service.js";
+import { getGoogleAppTesting } from "../services/settings.service.js";
 import { isUuid } from "../utils/processValidation.js";
 import { serializeEntitlement, serializeLegacyFolderConfig } from "../utils/serialize.js";
 import { HttpError } from "../utils/httpError.js";
@@ -50,7 +51,7 @@ router.get("/me", async (req, res) => {
     entitled: Boolean(entitlement && (entitlement.credits.image > 0 || entitlement.credits.document > 0)),
     admin: isAdmin(req.user.email),
     beta,
-    googleAppTesting: env.beta.googleAppTesting,
+    googleAppTesting: getGoogleAppTesting(),
     driveConnectedAt: credential.updatedAt,
   });
 });

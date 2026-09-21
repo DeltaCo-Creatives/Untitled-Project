@@ -937,3 +937,213 @@ describe("0005 idempotency", () => {
     assert.equal(rows[0].n, 1);
   });
 });
+
+// -------------------------------------------------------------------------- app_settings
+
+/** jsonb comes back already-parsed from most drivers, but don't assume it. */
+function settingValue(row) {
+  return typeof row.value === "string" ? JSON.parse(row.value) : row.value;
+}
+
+async function upsertSetting(key, value, updatedBy = null) {
+  await db.query(
+    "insert into public.app_settings (key, value, updated_by) values ($1, $2, $3) " +
+      "on conflict (key) do update set value = excluded.value, updated_by = excluded.updated_by, updated_at = now();",
+    [key, JSON.stringify(value), updatedBy],
+  );
+}
+
+async function getSetting(key) {
+  const { rows } = await db.query("select * from public.app_settings where key = $1;", [key]);
+  return rows[0];
+}
+
+describe("app_settings (0007)", () => {
+  test("round-trips a JSON value and the primary key upserts rather than duplicating", async () => {
+    const adminId = await createUser(db, `admin-settings-${randomUUID()}@example.com`);
+
+    await upsertSetting("betaDiscountPercent", 30, adminId);
+    let row = await getSetting("betaDiscountPercent");
+    assert.equal(settingValue(row), 30);
+    assert.equal(row.updated_by, adminId);
+
+    // Same key again with a different value: must update in place, not insert a second row.
+    await upsertSetting("betaDiscountPercent", { percent: 45, code: "LAUNCH45" }, adminId);
+    row = await getSetting("betaDiscountPercent");
+    assert.deepEqual(settingValue(row), { percent: 45, code: "LAUNCH45" });
+
+    const { rows: all } = await db.query(
+      "select count(*)::int as n from public.app_settings where key = $1;",
+      ["betaDiscountPercent"],
+    );
+    assert.equal(all[0].n, 1, "the upsert must not have duplicated the row");
+  });
+
+  test("deleting a key removes it entirely, which is the fallback-to-env path", async () => {
+    await upsertSetting("googleAppTesting", true);
+    assert.ok(await getSetting("googleAppTesting"), "must exist before the delete");
+
+    await db.query("delete from public.app_settings where key = $1;", ["googleAppTesting"]);
+
+    assert.equal(await getSetting("googleAppTesting"), undefined, "must be gone, not merely emptied");
+  });
+
+  test("service_role can read and write app_settings; anon/authenticated cannot (RLS, no policies)", async () => {
+    await withRole(db, "service_role", async () => {
+      await db.query(
+        "insert into public.app_settings (key, value) values ('lemonSqueezyStore', '\"drivetag\"'::jsonb) " +
+          "on conflict (key) do update set value = excluded.value;",
+      );
+      const { rows } = await db.query("select value from public.app_settings where key = 'lemonSqueezyStore';");
+      assert.equal(rows.length, 1);
+    });
+
+    for (const role of ["anon", "authenticated"]) {
+      await withRole(db, role, async () => {
+        const { rows } = await db.query("select * from public.app_settings;");
+        assert.equal(rows.length, 0, `${role} must see no rows through RLS`);
+      });
+    }
+  });
+});
+
+// --------------------------------------------------------------------- admin_user_lookup
+
+describe("admin_user_lookup (0007)", () => {
+  test("finds a user case-insensitively and returns zero rows for an unknown address", async () => {
+    const email = `lookup-${randomUUID()}@example.com`;
+    const userId = await createUser(db, email);
+
+    const { rows: hit } = await db.query("select * from public.admin_user_lookup($1);", [email.toUpperCase()]);
+    assert.equal(hit.length, 1);
+    assert.equal(hit[0].user_id, userId);
+    assert.equal(hit[0].email, email);
+    assert.ok(hit[0].created_at, "created_at must be returned");
+
+    const { rows: miss } = await db.query("select * from public.admin_user_lookup($1);", [
+      `nobody-${randomUUID()}@example.com`,
+    ]);
+    assert.equal(miss.length, 0);
+  });
+
+  test("function execute grants: service_role only", async () => {
+    const email = `lookup-grant-${randomUUID()}@example.com`;
+    await createUser(db, email);
+
+    await withRole(db, "service_role", async () => {
+      await db.query("select * from public.admin_user_lookup($1);", [email]);
+    });
+
+    for (const role of ["anon", "authenticated"]) {
+      const denied = await withRole(db, role, () =>
+        isPermissionDenied(() => db.query("select * from public.admin_user_lookup($1);", [email])),
+      );
+      assert.ok(denied, `${role} must be denied`);
+    }
+  });
+});
+
+// ------------------------------------------------------------------ admin_set_plan_by_id
+
+describe("admin_set_plan_by_id (0007)", () => {
+  test("an admin plan change does not relabel a real Lemon Squeezy subscriber as manual", async () => {
+    const userId = await createUser(db);
+    await db.query(
+      "select * from public.apply_subscription_state($1,'studio','active','lemonsqueezy','cus-9','sub-9',null,true);",
+      [userId],
+    );
+
+    await db.query("select * from public.admin_set_plan_by_id($1, 'complete-studio', 'active', false);", [userId]);
+
+    const { rows } = await db.query("select * from public.subscriptions where user_id = $1;", [userId]);
+    assert.equal(rows[0].plan, "complete-studio", "the plan change must apply");
+    assert.equal(rows[0].provider, "lemonsqueezy", "who bills this account must not be overwritten");
+    assert.equal(rows[0].provider_customer_id, "cus-9");
+    assert.equal(rows[0].provider_subscription_id, "sub-9");
+  });
+
+
+  test("delegates to apply_subscription_state: sets plan/status and moves period_anchor only when it should", async () => {
+    const userId = await createUser(db);
+
+    const first = await db.query("select * from public.admin_set_plan_by_id($1, 'creator', 'active', true);", [
+      userId,
+    ]);
+    assert.equal(first.rows[0].plan, "creator");
+    assert.equal(first.rows[0].status, "active");
+    assert.equal(first.rows[0].provider, null, "a manually-set plan has no billing provider");
+    const firstAnchor = new Date(first.rows[0].period_anchor).getTime();
+
+    // Same plan, no restart requested: anchor must not move (byte-identical, not just "close").
+    const same = await db.query("select * from public.admin_set_plan_by_id($1, 'creator', 'active', false);", [
+      userId,
+    ]);
+    assert.equal(
+      new Date(same.rows[0].period_anchor).getTime(),
+      firstAnchor,
+      "same plan, no restart: anchor must not move",
+    );
+
+    // A tiny real gap so a moved anchor is unambiguously later even at coarse clock resolution.
+    await db.query("select pg_sleep(0.01);");
+
+    // Different plan, no explicit restart: anchor must move because the plan itself changed
+    // — exactly apply_subscription_state's rule, inherited through the delegation.
+    const changed = await db.query("select * from public.admin_set_plan_by_id($1, 'studio', 'active', false);", [
+      userId,
+    ]);
+    assert.equal(changed.rows[0].plan, "studio");
+    assert.ok(
+      new Date(changed.rows[0].period_anchor).getTime() > firstAnchor,
+      "plan change must move the anchor forward even without an explicit restart",
+    );
+
+    const sub = await getSubscription(userId);
+    assert.equal(sub.plan, "studio", "the subscriptions row itself must reflect the change");
+  });
+
+  test("rejects an invalid plan and an invalid status, writing nothing", async () => {
+    const userId = await createUser(db);
+
+    await assert.rejects(
+      () => db.query("select * from public.admin_set_plan_by_id($1, 'not-a-real-plan', 'active', false);", [userId]),
+      /invalid_plan/,
+    );
+    await assert.rejects(
+      () => db.query("select * from public.admin_set_plan_by_id($1, 'creator', 'trialing', false);", [userId]),
+      /invalid_status/,
+      "trialing was removed by 0003 and must stay rejected",
+    );
+
+    const { rows } = await db.query("select * from public.subscriptions where user_id = $1;", [userId]);
+    assert.equal(rows.length, 0, "a rejected call must not have created or touched a subscriptions row");
+  });
+
+  test("function execute grants: service_role only", async () => {
+    const userId = await createUser(db);
+
+    await withRole(db, "service_role", async () => {
+      await db.query("select * from public.admin_set_plan_by_id($1, 'creator', 'active', false);", [userId]);
+    });
+
+    for (const role of ["anon", "authenticated"]) {
+      const denied = await withRole(db, role, () =>
+        isPermissionDenied(() =>
+          db.query("select * from public.admin_set_plan_by_id($1, 'creator', 'active', false);", [userId]),
+        ),
+      );
+      assert.ok(denied, `${role} must be denied`);
+    }
+  });
+});
+
+// --------------------------------------------------------------------------- idempotency
+
+describe("0007 idempotency", () => {
+  test("schema_migrations has exactly one row for 0007_admin after applying it twice", async () => {
+    const { rows } = await db.query(
+      "select count(*)::int as n from public.schema_migrations where version = '0007_admin';",
+    );
+    assert.equal(rows[0].n, 1);
+  });
+});

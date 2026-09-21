@@ -7,12 +7,22 @@
  * timeout, `openCheckout` falls back to a plain redirect.
  */
 
+interface LemonSqueezyEvent {
+  event?: string;
+}
+
 declare global {
   interface Window {
     createLemonSqueezy?: () => void;
-    LemonSqueezy?: { Url: { Open: (url: string) => void } };
+    LemonSqueezy?: {
+      Url: { Open: (url: string) => void; Close?: () => void };
+      Setup?: (options: { eventHandler: (event: LemonSqueezyEvent) => void }) => void;
+    };
   }
 }
+
+/** Where a completed purchase lands. The page confirms from GET /api/me — never from this URL. */
+const SUCCESS_PATH = '/checkout/success';
 
 const SCRIPT_URL = 'https://assets.lemonsqueezy.com/lemon.js';
 const READY_TIMEOUT_MS = 4000;
@@ -21,7 +31,10 @@ const READY_TIMEOUT_MS = 4000;
 let scriptPromise: Promise<void> | null = null;
 
 function loadScript(): Promise<void> {
-  if (window.LemonSqueezy) return Promise.resolve();
+  if (window.LemonSqueezy) {
+    registerSuccessHandler();
+    return Promise.resolve();
+  }
   if (!scriptPromise) {
     scriptPromise = new Promise<void>((resolve, reject) => {
       const script = document.createElement('script');
@@ -30,6 +43,7 @@ function loadScript(): Promise<void> {
       script.onload = () => {
         // The script's own bootstrap: sets up window.LemonSqueezy and its Url.Open/Close helpers.
         window.createLemonSqueezy?.();
+        registerSuccessHandler();
         resolve();
       };
       script.onerror = () => reject(new Error('Failed to load the Lemon Squeezy checkout script'));
@@ -41,6 +55,30 @@ function loadScript(): Promise<void> {
     });
   }
   return scriptPromise;
+}
+
+/**
+ * Lemon Squeezy fires `Checkout.Success` in the overlay the moment a purchase completes. Without this the
+ * buyer would have to notice and click the confirmation modal's button to come back, and anyone who closed
+ * the overlay instead would never see their receipt at all. Best-effort: if the API isn't there, the
+ * confirmation modal's button link (set per product during setup) is still the way back.
+ */
+function registerSuccessHandler(): void {
+  try {
+    window.LemonSqueezy?.Setup?.({
+      eventHandler: (event) => {
+        if (event?.event !== 'Checkout.Success') return;
+        try {
+          window.LemonSqueezy?.Url?.Close?.();
+        } catch {
+          // Closing is a courtesy; navigating away removes the overlay regardless.
+        }
+        window.location.assign(SUCCESS_PATH);
+      },
+    });
+  } catch {
+    // Never let a failure here stop the checkout itself from opening.
+  }
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

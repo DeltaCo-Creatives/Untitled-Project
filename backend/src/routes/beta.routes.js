@@ -1,17 +1,11 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireAdmin } from "../middleware/requireAdmin.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { HttpError } from "../utils/httpError.js";
 import { isUuid } from "../utils/processValidation.js";
 import { listSignups } from "../repositories/betaSignup.repo.js";
-import {
-  assertValidSignup,
-  isAdmin,
-  listSignupsForAdmin,
-  patchSignup,
-  saveSignup,
-  signupsToCsv,
-} from "../services/beta.service.js";
+import { assertValidSignup, listSignupsForAdmin, patchSignup, saveSignup, signupsToCsv } from "../services/beta.service.js";
 
 const router = Router();
 
@@ -24,12 +18,6 @@ const signupLimiter = rateLimit({
   max: 5,
   message: "Too many signups from this address. Try again in a bit.",
 });
-
-/** Must run after requireAuth — req.user.email comes from Supabase's verified token. */
-function requireAdmin(req, res, next) {
-  if (!isAdmin(req.user.email)) return next(new HttpError(403, "Admins only.", { code: "not_admin" }));
-  next();
-}
 
 /** Public: closed-beta signup form. No auth — this runs before anyone has an account. */
 router.post("/signups", async (req, res) => {

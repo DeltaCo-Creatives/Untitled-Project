@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { CircleAlert, Info, LogOut, PlugZap, RefreshCw, TriangleAlert, X } from 'lucide-react';
+import { CircleAlert, Info, LogOut, PlugZap, RefreshCw, Settings, TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { gsap, useGSAP, SplitText, MOTION_OK } from '../lib/gsap';
 import { plural } from '../lib/format';
@@ -363,7 +363,17 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  {me.admin && <BetaSignupsCard className="dash-item" />}
+                  {me.admin && (
+                    <>
+                      <div className="dash-item flex flex-wrap items-center justify-between gap-3 rounded-[2rem] border border-line bg-white px-6 py-4 shadow-soft sm:px-8">
+                        <p className="text-sm font-semibold text-ink-soft">Owner tools: payments, the closed beta and account overrides.</p>
+                        <ButtonLink to="/admin" variant="secondary" size="sm">
+                          <Settings className="h-4 w-4" aria-hidden /> Owner settings
+                        </ButtonLink>
+                      </div>
+                      <BetaSignupsCard className="dash-item" />
+                    </>
+                  )}
 
                   <ActivityList activity={activity} processes={processes} live={live} className="dash-item" />
                 </div>

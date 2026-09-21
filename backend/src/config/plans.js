@@ -16,7 +16,6 @@
  * variant (see publicPlansPayload's `purchasable`); until then the UI shows "Coming
  * soon" for it.
  */
-import { env } from "./env.js";
 
 export const CURRENCY = "USD";
 
@@ -186,18 +185,25 @@ export const PROCESS_LIMITS = {
   templateMax: 200,
 };
 
-/** A plan or pack is purchasable once LEMONSQUEEZY_VARIANTS maps its id to a variant. */
-function isPurchasable(id) {
-  return Boolean(env.lemonSqueezy.variants[id]);
+/** A plan or pack is purchasable once `variants` maps its id to a variant. */
+function isPurchasable(id, variants) {
+  return Boolean(variants[id]);
 }
 
-export function publicPlansPayload() {
+/**
+ * `lemonSqueezy` is `{ variants, configured }`, already resolved (database -> environment
+ * -> default) by the caller — see services/settings.service.js's getLemonSqueezyConfig().
+ * This function stays synchronous and pure on purpose: it must not import a service (that
+ * would invert config -> service layering and create an import cycle), so the route passes
+ * the resolved value in instead of this reaching for it itself.
+ */
+export function publicPlansPayload({ variants = {}, configured = false } = {}) {
   return {
     currency: CURRENCY,
     families: FAMILIES.map((family) => ({ ...family })),
-    plans: PLAN_ORDER.map((id) => ({ ...PLANS[id], price: { ...PLANS[id].price }, purchasable: isPurchasable(id) })),
-    topupPacks: TOPUP_PACKS.map((pack) => ({ ...pack, purchasable: isPurchasable(pack.id) })),
-    documentPacks: DOCUMENT_PACKS.map((pack) => ({ ...pack, purchasable: isPurchasable(pack.id) })),
+    plans: PLAN_ORDER.map((id) => ({ ...PLANS[id], price: { ...PLANS[id].price }, purchasable: isPurchasable(id, variants) })),
+    topupPacks: TOPUP_PACKS.map((pack) => ({ ...pack, purchasable: isPurchasable(pack.id, variants) })),
+    documentPacks: DOCUMENT_PACKS.map((pack) => ({ ...pack, purchasable: isPurchasable(pack.id, variants) })),
     fileLimits: { ...FILE_LIMITS },
     processLimits: { ...PROCESS_LIMITS },
     // Every price above is tax-exclusive; Lemon Squeezy, our Merchant of Record, adds the
@@ -205,6 +211,6 @@ export function publicPlansPayload() {
     // assuming either, so this stays correct if that ever changes.
     pricesIncludeTax: false,
     merchantOfRecord: "Lemon Squeezy",
-    checkoutEnabled: env.lemonSqueezy.configured,
+    checkoutEnabled: configured,
   };
 }

@@ -1,10 +1,17 @@
 import crypto from "node:crypto";
 import { env } from "../config/env.js";
 import { PLANS, TOPUP_PACKS, DOCUMENT_PACKS } from "../config/plans.js";
+import { getLemonSqueezyConfig } from "./settings.service.js";
 
-/** Store + at least one variant are both needed to build a real checkout link. */
+/**
+ * Store + at least one variant are both needed to build a real checkout link. Reads
+ * through settings.service.js so an admin-set store/variant override (database ->
+ * environment -> built-in default) applies without a redeploy; every function below
+ * stays synchronous because POST /api/checkout and the Lemon Squeezy webhook call
+ * these without await (see settings.service.js's cache comment for why that's safe).
+ */
 export function isConfigured() {
-  return env.lemonSqueezy.configured;
+  return getLemonSqueezyConfig().configured;
 }
 
 /** The webhook only needs a signing secret — it never builds a checkout link. */
@@ -26,8 +33,14 @@ export function variantFor(itemId, billing) {
   if (typeof itemId !== "string" || !itemId) return null;
   if (!Object.hasOwn(PLANS, itemId) && packCreditsFor(itemId) === null) return null;
 
+  // A plan is only buyable on an interval it actually has a price for. The three Enterprise tiers are
+  // monthly-only by decision, so asking for `enterprise` yearly must not resolve — otherwise a stray
+  // `enterprise-yearly` variant id would sell a yearly plan that has no advertised price anywhere.
+  if (billing === "yearly" && !PLANS[itemId]?.billing?.includes("yearly")) return null;
+
   const key = billing === "yearly" ? `${itemId}-yearly` : itemId;
-  const variantId = Object.hasOwn(env.lemonSqueezy.variants, key) ? env.lemonSqueezy.variants[key] : null;
+  const { variants } = getLemonSqueezyConfig();
+  const variantId = Object.hasOwn(variants, key) ? variants[key] : null;
   if (typeof variantId !== "string" && typeof variantId !== "number") return null;
   return String(variantId);
 }
@@ -58,7 +71,8 @@ export function checkoutUrlFor({ itemId, billing, userId, email }) {
   const params = [`checkout[custom][user_id]=${encodeURIComponent(userId)}`];
   if (email) params.push(`checkout[email]=${encodeURIComponent(email)}`);
 
-  return `https://${encodeURIComponent(env.lemonSqueezy.store)}.lemonsqueezy.com/checkout/buy/${encodeURIComponent(variantId)}?${params.join("&")}`;
+  const { store } = getLemonSqueezyConfig();
+  return `https://${encodeURIComponent(store)}.lemonsqueezy.com/checkout/buy/${encodeURIComponent(variantId)}?${params.join("&")}`;
 }
 
 /**
@@ -84,8 +98,9 @@ export function verifySignature(rawBody, signatureHeader) {
 export function planForVariant(variantId) {
   if (variantId === null || variantId === undefined) return null;
   const target = String(variantId);
+  const { variants } = getLemonSqueezyConfig();
 
-  for (const [key, configuredId] of Object.entries(env.lemonSqueezy.variants)) {
+  for (const [key, configuredId] of Object.entries(variants)) {
     if (String(configuredId) !== target) continue;
 
     const yearly = key.endsWith("-yearly");
